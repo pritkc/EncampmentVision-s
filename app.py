@@ -8,12 +8,15 @@ from PIL import Image, ImageDraw, ImageFont
 import pandas as pd
 import google_streetview.api
 import folium
+from folium.plugins import Draw
 from streamlit_folium import folium_static
 import base64
 import io
 import re
+import json
 from datetime import datetime
 import matplotlib.pyplot as plt
+from streamlit.components.v1 import html
 # Import utility functions from the homeless_detection package
 from homeless_detection.utils import load_model as utils_load_model
 from homeless_detection.utils import draw_predictions as utils_draw_predictions
@@ -56,10 +59,50 @@ api_key = st.sidebar.text_input("Google Street View API Key", type="password")
 
 # Area selection
 st.sidebar.subheader("Area Selection")
-top_left_lat = st.sidebar.number_input("Top Left Latitude", value=34.044133, format="%.6f")
-top_left_lon = st.sidebar.number_input("Top Left Longitude", value=-118.243896, format="%.6f")
-bottom_right_lat = st.sidebar.number_input("Bottom Right Latitude", value=34.038049, format="%.6f")
-bottom_right_lon = st.sidebar.number_input("Bottom Right Longitude", value=-118.242965, format="%.6f")
+
+# Create session state for coordinates if not exists
+if 'top_left_lat' not in st.session_state:
+    st.session_state.top_left_lat = 34.044133
+if 'top_left_lon' not in st.session_state:
+    st.session_state.top_left_lon = -118.243896
+if 'bottom_right_lat' not in st.session_state:
+    st.session_state.bottom_right_lat = 34.038049
+if 'bottom_right_lon' not in st.session_state:
+    st.session_state.bottom_right_lon = -118.242965
+
+# Callback to update coordinate values
+def handle_bbox_selection(bbox_coords):
+    if bbox_coords:
+        try:
+            coords = json.loads(bbox_coords)
+            # Round coordinates to 6 decimal places for consistency
+            st.session_state.top_left_lat = round(float(coords.get('topLeftLat', st.session_state.top_left_lat)), 6)
+            st.session_state.top_left_lon = round(float(coords.get('topLeftLon', st.session_state.top_left_lon)), 6)
+            st.session_state.bottom_right_lat = round(float(coords.get('bottomRightLat', st.session_state.bottom_right_lat)), 6)
+            st.session_state.bottom_right_lon = round(float(coords.get('bottomRightLon', st.session_state.bottom_right_lon)), 6)
+            st.rerun()
+        except (json.JSONDecodeError, ValueError) as e:
+            st.error(f"Error parsing coordinates: {str(e)}")
+
+# Callback for number input changes
+def update_coordinate(coordinate_name):
+    # Just for triggering session state update
+    pass
+
+# Coordinate input fields
+top_left_lat = st.sidebar.number_input("Top Left Latitude", value=st.session_state.top_left_lat, format="%.6f", key="top_left_lat_input", on_change=update_coordinate, args=("top_left_lat",))
+top_left_lon = st.sidebar.number_input("Top Left Longitude", value=st.session_state.top_left_lon, format="%.6f", key="top_left_lon_input", on_change=update_coordinate, args=("top_left_lon",))
+bottom_right_lat = st.sidebar.number_input("Bottom Right Latitude", value=st.session_state.bottom_right_lat, format="%.6f", key="bottom_right_lat_input", on_change=update_coordinate, args=("bottom_right_lat",))
+bottom_right_lon = st.sidebar.number_input("Bottom Right Longitude", value=st.session_state.bottom_right_lon, format="%.6f", key="bottom_right_lon_input", on_change=update_coordinate, args=("bottom_right_lon",))
+
+# Update session state variables when inputs change
+st.session_state.top_left_lat = top_left_lat
+st.session_state.top_left_lon = top_left_lon 
+st.session_state.bottom_right_lat = bottom_right_lat
+st.session_state.bottom_right_lon = bottom_right_lon
+
+# Add an instruction about drawing on the map
+st.sidebar.info("You can also draw a bounding box directly on the map using the draw tools. The coordinates will be automatically updated.")
 
 # Grid dimensions
 st.sidebar.subheader("Grid Dimensions")
@@ -148,14 +191,60 @@ def display_area_map():
             opacity=0.7
         ).add_to(m)
     
+    # Add drawing capabilities to the map
+    draw = Draw(
+        draw_options={
+            'polyline': False,
+            'polygon': False,
+            'circle': False,
+            'marker': False,
+            'circlemarker': False,
+            'rectangle': True,
+        },
+        edit_options={
+            'edit': True,
+            'remove': True
+        }
+    )
+    draw.add_to(m)
+    
     return m
 
 # Display initial map
 col1, col2 = st.columns([2, 1])
 with col1:
     st.subheader("Selected Area")
+    st.markdown("""
+    **Draw a bounding box on the map:**
+    1. Click the rectangle tool (☐) in the toolbar
+    2. Click and drag on the map to draw a box
+    3. Edit the box by clicking the edit tool and dragging the corners
+    4. The coordinates will automatically update in the sidebar
+    """)
     area_map = display_area_map()
-    folium_static(area_map)
+    
+    # Replace folium_static with st_folium
+    from streamlit_folium import st_folium
+    map_data = st_folium(area_map, width=800, returned_objects=["all_drawings"])
+    
+    # Handle map data for bounding box updates
+    if map_data is not None and "all_drawings" in map_data:
+        drawings = map_data["all_drawings"]
+        if drawings:  # If there are any drawings
+            last_drawing = drawings[-1]  # Get the most recent drawing
+            if "geometry" in last_drawing and "coordinates" in last_drawing["geometry"]:
+                coords = last_drawing["geometry"]["coordinates"][0]  # Get coordinates
+                # Extract bounds from the rectangle coordinates
+                lats = [coord[1] for coord in coords]
+                lons = [coord[0] for coord in coords]
+                
+                bbox_data = {
+                    "topLeftLat": max(lats),
+                    "topLeftLon": min(lons),
+                    "bottomRightLat": min(lats),
+                    "bottomRightLon": max(lons)
+                }
+                handle_bbox_selection(json.dumps(bbox_data))
 
 with col2:
     st.subheader("Grid Information")
@@ -165,6 +254,15 @@ with col2:
     - Longitude Range: {top_left_lon:.6f} to {bottom_right_lon:.6f}
     - Points will be sampled at headings: 0° and 180°
     - Total API calls: {num_rows * num_cols * 2}
+    """)
+    
+    # Add a tips section
+    st.markdown("### Tips")
+    st.markdown("""
+    - Draw a rectangle on the map to set the area
+    - The coordinates will update automatically in the sidebar
+    - You can fine-tune coordinates by editing the numbers in the sidebar
+    - Keep the shape rectangular for accurate grid calculations
     """)
 
 # Function to load model - use the utility function with Streamlit caching
@@ -235,6 +333,20 @@ def run_detection():
         st.error("Please enter your Google Street View API Key")
         return None
     
+    # Add API key validation check
+    test_params = [{
+        'size': '640x640',
+        'location': '34.0522, -118.2437',  # Test with known LA coordinates
+        'heading': '0',
+        'pitch': '0',
+        'key': api_key
+    }]
+    test_result = google_streetview.api.results(test_params)
+    if test_result.metadata[0].get('status') != 'OK':
+        st.error("❌ Invalid API Key")
+        return None
+    st.success("✅ API Key Valid")
+    
     # Generate grid points
     latitudes = [top_left_lat + i * (bottom_right_lat - top_left_lat) / (num_rows - 1) for i in range(num_rows)]
     longitudes = [top_left_lon + j * (bottom_right_lon - top_left_lon) / (num_cols - 1) for j in range(num_cols)]
@@ -272,7 +384,6 @@ def run_detection():
         for heading in [0, 180]:
             status_text.text(f"Processing location {idx+1}/{len(grid_points)}, heading {heading}°...")
             
-            # Prepare Street View API parameters
             params = [{
                 'size': '640x640',
                 'location': f'{lat},{lon}',
@@ -282,7 +393,6 @@ def run_detection():
             }]
             
             try:
-                # Get street view image
                 results = google_streetview.api.results(params)
                 
                 if results.metadata[0]['status'] == 'OK':
