@@ -50,6 +50,14 @@ LABEL_MAP = {
     4: "Homeless_Bike"
 }
 
+# Category display names (more user-friendly)
+CATEGORY_DISPLAY = {
+    1: "Homeless People",
+    2: "Homeless Encampments",
+    3: "Homeless Carts",
+    4: "Homeless Bikes"
+}
+
 # Sidebar for input parameters
 st.sidebar.title("Homeless Detection System")
 st.sidebar.info("This application detects homeless-related objects in Google Street View images")
@@ -104,13 +112,42 @@ st.session_state.bottom_right_lon = bottom_right_lon
 # Add an instruction about drawing on the map
 st.sidebar.info("You can also draw a bounding box directly on the map using the draw tools. The coordinates will be automatically updated.")
 
+# Category selection
+st.sidebar.subheader("Detection Categories")
+st.sidebar.markdown("Select which categories to detect:")
+
+# Initialize session state for category selection if not exists
+if 'selected_categories' not in st.session_state:
+    st.session_state.selected_categories = {1: True, 2: True, 3: True, 4: True}
+
+# Initialize session state for thresholds if not exists
+if 'category_thresholds' not in st.session_state:
+    st.session_state.category_thresholds = {1: 0.5, 2: 0.5, 3: 0.5, 4: 0.5}
+
+# Create checkboxes for each category
+for category_id, display_name in CATEGORY_DISPLAY.items():
+    st.session_state.selected_categories[category_id] = st.sidebar.checkbox(
+        display_name, 
+        value=st.session_state.selected_categories[category_id]
+    )
+    
+    # Only show threshold slider if category is selected
+    if st.session_state.selected_categories[category_id]:
+        st.session_state.category_thresholds[category_id] = st.sidebar.slider(
+            f"{display_name} Confidence Threshold", 
+            min_value=0.0, 
+            max_value=1.0, 
+            value=st.session_state.category_thresholds[category_id], 
+            step=0.05
+        )
+
+# Legacy confidence threshold - hidden for backwards compatibility
+confidence_threshold = 0.5  # Default value for backwards compatibility
+
 # Grid dimensions
 st.sidebar.subheader("Grid Dimensions")
 num_rows = st.sidebar.slider("Number of Rows", min_value=2, max_value=10, value=5)
 num_cols = st.sidebar.slider("Number of Columns", min_value=2, max_value=10, value=5)
-
-# Confidence threshold
-confidence_threshold = st.sidebar.slider("Confidence Threshold", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
 
 # Model selection
 # model_path = "model_final_2.pth"
@@ -146,12 +183,24 @@ else:
 st.title("Homeless Detection from Google Street View")
 st.markdown("""
 This application uses a trained Faster R-CNN model to detect homeless-related objects in Google Street View images.
-The model can detect:
-- Homeless People
-- Homeless Encampments 
-- Homeless Carts
-- Homeless Bikes
 """)
+
+# Display selected categories
+st.subheader("Selected Detection Categories")
+selected_categories = [CATEGORY_DISPLAY[cat_id] for cat_id, selected in st.session_state.selected_categories.items() if selected]
+
+if selected_categories:
+    cols = st.columns(len(selected_categories))
+    for i, cat_name in enumerate(selected_categories):
+        with cols[i]:
+            cat_id = [k for k, v in CATEGORY_DISPLAY.items() if v == cat_name][0]
+            st.metric(
+                cat_name, 
+                f"{st.session_state.category_thresholds[cat_id]:.2f}",
+                "threshold"
+            )
+else:
+    st.warning("Please select at least one category to detect")
 
 # Display a map with the selected area
 def display_area_map():
@@ -289,11 +338,26 @@ def process_image(image_path, model, device, lat, lon, heading, pano_id, date):
     pred_labels = prediction["labels"].cpu().numpy()
     pred_scores = prediction["scores"].cpu().numpy()
     
-    # Filter by confidence threshold
-    mask = pred_scores >= confidence_threshold
-    pred_boxes = pred_boxes[mask]
-    pred_labels = pred_labels[mask]
-    pred_scores = pred_scores[mask]
+    # Filter by selected categories and their thresholds
+    filtered_indices = []
+    for i, (label, score) in enumerate(zip(pred_labels, pred_scores)):
+        category_id = int(label)
+        # Check if category is selected and meets its threshold
+        if (category_id in st.session_state.selected_categories and 
+            st.session_state.selected_categories[category_id] and
+            score >= st.session_state.category_thresholds[category_id]):
+            filtered_indices.append(i)
+    
+    # Apply filters
+    if filtered_indices:
+        pred_boxes = pred_boxes[filtered_indices]
+        pred_labels = pred_labels[filtered_indices]
+        pred_scores = pred_scores[filtered_indices]
+    else:
+        # No detections that meet criteria
+        pred_boxes = np.array([])
+        pred_labels = np.array([])
+        pred_scores = np.array([])
     
     detections = []
     if len(pred_boxes) > 0:
@@ -304,9 +368,9 @@ def process_image(image_path, model, device, lat, lon, heading, pano_id, date):
         
         image.save(original_path)
         
-        # Draw predictions using utility function
+        # Draw predictions using utility function with different thresholds per category
         pred_image = utils_draw_predictions(
-            image.copy(), pred_boxes, pred_labels, pred_scores, confidence_threshold
+            image.copy(), pred_boxes, pred_labels, pred_scores, 0.0  # Pass 0.0 as threshold since we already filtered
         )
         pred_image.save(predicted_path)
         
@@ -331,6 +395,11 @@ def run_detection():
     # Check if API key is provided
     if not api_key:
         st.error("Please enter your Google Street View API Key")
+        return None
+    
+    # Check if at least one category is selected
+    if not any(st.session_state.selected_categories.values()):
+        st.error("Please select at least one detection category")
         return None
     
     # Add API key validation check
@@ -463,7 +532,7 @@ def display_summary_stats(detections):
     return create_summary_charts(detections)
 
 # Run button
-if st.button("Run Detection", type="primary", disabled=not can_run_detection):
+if st.button("Run Detection", type="primary", disabled=not can_run_detection or not any(st.session_state.selected_categories.values())):
     with st.spinner("Running detection process..."):
         detections = run_detection()
     
