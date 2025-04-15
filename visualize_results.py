@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import folium
-from streamlit_folium import folium_static
+from streamlit_folium import st_folium
 import matplotlib.pyplot as plt
 import base64
 from PIL import Image
@@ -183,7 +183,7 @@ else:
             st.subheader("Detection Map")
             results_map = display_results_map(filtered_df, predicted_dir)
             if results_map:
-                folium_static(results_map, width=1200, height=800)
+                st_folium(results_map, width=1200, height=800)
         
         with tab2:
             st.subheader("Summary Statistics")

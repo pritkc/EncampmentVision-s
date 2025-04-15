@@ -1,6 +1,82 @@
 # Homeless Detection System
 
-A Streamlit-based web application for detecting homeless-related objects in Google Street View images using a pre-trained deep learning model.
+This application uses a trained Faster R-CNN model to detect homeless-related objects in Google Street View images.
+
+## Prerequisites
+
+- Python 3.8 or later
+- A valid Google Street View API key
+- PyTorch and other dependencies (see requirements.txt)
+
+## Setup
+
+1. Clone this repository
+2. Install dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+3. Place your trained model file(s) in the `models` directory (`.pth` files)
+
+## Running the Application
+
+To avoid PyTorch-related errors with Streamlit, use the provided launcher scripts:
+
+### Main Detection App
+
+```bash
+python run_app.py --browser
+```
+
+Options:
+- `--browser`: Open the browser automatically
+- `--port <number>`: Run on a specific port (default: 8501)
+- `--debug`: Enable debug mode (includes file watching)
+
+### Results Visualization
+
+To view previously generated results:
+
+```bash
+python run_visualizer.py --browser
+```
+
+Options:
+- `--browser`: Open the browser automatically
+- `--port <number>`: Run on a specific port (default: 8502)
+- `--debug`: Enable debug mode
+
+## Troubleshooting
+
+### PyTorch Path Errors
+
+If you see errors related to `torch._classes.__path__._path` or similar, make sure to:
+1. Use the provided launcher scripts instead of running `streamlit run app.py` directly
+2. Update to the latest version of PyTorch
+3. Try running with the `--debug` flag disabled
+
+### Map Display Issues
+
+If the map doesn't display correctly:
+1. Check that you have internet connectivity
+2. Verify that all image paths are correct
+3. Try refreshing the page
+
+## Features
+
+- Select specific categories to detect (People, Encampments, Bikes, Carts)
+- Set individual confidence thresholds per category
+- Draw bounding boxes on maps to select areas
+- View detection results on an interactive map
+- Generate statistics and visualizations
+
+## Directory Structure
+
+- `app.py`: Main application file
+- `visualize_results.py`: Results viewer
+- `run_app.py` & `run_visualizer.py`: Launcher scripts
+- `models/`: Directory for model files
+- `results/`: Directory for detection results
+- `homeless_detection/`: Utility functions package
 
 ## Overview
 

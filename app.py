@@ -6,10 +6,11 @@ import torch
 import torchvision.transforms.functional as TF
 from PIL import Image, ImageDraw, ImageFont
 import pandas as pd
+import numpy as np
 import google_streetview.api
 import folium
 from folium.plugins import Draw
-from streamlit_folium import folium_static
+from streamlit_folium import st_folium
 import base64
 import io
 import re
@@ -17,10 +18,70 @@ import json
 from datetime import datetime
 import matplotlib.pyplot as plt
 from streamlit.components.v1 import html
+import shutil
+import logging
+import sys
+import types
+import warnings
+import asyncio
+import inspect
+import uuid
+import tempfile
+from pathlib import Path
+from io import BytesIO
+from functools import partial
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Debug mode - set to True to see more detailed error messages
+DEBUG = False
+
+# Fix PyTorch path errors - more aggressive approach
+import sys
+import types
+
+# Create a safe module proxy that handles the __path__ attribute correctly
+class SafeModuleProxy:
+    def __init__(self, real_module):
+        self.real_module = real_module
+        
+    def __getattr__(self, name):
+        try:
+            if name == '__path__':
+                # Silently return empty path without logging
+                return types.SimpleNamespace(_path=[])
+            return getattr(self.real_module, name)
+        except Exception:
+            # Suppress all errors from path access
+            if name == '__path__':
+                return types.SimpleNamespace(_path=[])
+            raise
+
+# Suppress specific PyTorch warnings
+warnings.filterwarnings('ignore', category=UserWarning, module='torch')
+
+# Apply the fix to torch._classes
+try:
+    if hasattr(torch, '_classes'):
+        torch._classes = SafeModuleProxy(torch._classes)
+        sys.modules['torch._classes'] = torch._classes
+except Exception:
+    # Silently handle any errors during path fix
+    pass
+
 # Import utility functions from the homeless_detection package
-from homeless_detection.utils import load_model as utils_load_model
-from homeless_detection.utils import draw_predictions as utils_draw_predictions
-from homeless_detection.utils import create_detection_map, create_summary_charts
+try:
+    from homeless_detection.utils import load_model as utils_load_model
+    from homeless_detection.utils import draw_predictions as utils_draw_predictions
+    from homeless_detection.utils import create_detection_map, create_summary_charts
+    if DEBUG:
+        st.write("Successfully imported homeless_detection utilities")
+except Exception as e:
+    st.error(f"Error importing homeless_detection utilities: {str(e)}")
+    if DEBUG:
+        st.write(f"Detailed error: {str(e)}")
 
 # Set page config
 st.set_page_config(
@@ -30,6 +91,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Session state debugging
+if st.session_state:
+    logger.info("Current session state keys: %s", list(st.session_state.keys()))
+
 # Constants and configurations
 TEMP_DIR = "temp_images"
 RESULTS_DIR = "results"
@@ -37,10 +102,58 @@ ORIGINAL_DIR = os.path.join(RESULTS_DIR, "original")
 PREDICTED_DIR = os.path.join(RESULTS_DIR, "predicted")
 CSV_PATH = os.path.join(RESULTS_DIR, "predictions.csv")
 
-# Create necessary directories
-os.makedirs(TEMP_DIR, exist_ok=True)
-os.makedirs(ORIGINAL_DIR, exist_ok=True)
-os.makedirs(PREDICTED_DIR, exist_ok=True)
+# Initialize persistent directories
+for directory in [TEMP_DIR, RESULTS_DIR, ORIGINAL_DIR, PREDICTED_DIR]:
+    os.makedirs(directory, exist_ok=True)
+
+# Only clean temp directory if it's a new session
+if 'initialized' not in st.session_state:
+    logger.info("New session detected, cleaning temporary directories")
+    try:
+        for file in os.listdir(TEMP_DIR):
+            file_path = os.path.join(TEMP_DIR, file)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                logger.warning(f"Error cleaning temp file {file_path}: {e}")
+    except Exception as e:
+        logger.warning(f"Error cleaning temp directory: {e}")
+    
+    st.session_state.initialized = True
+    logger.info("Session initialized")
+
+# Add session state tracking
+logger.info("=== Session State Snapshot ===")
+logger.info("Initialization status: %s", st.session_state.get('initialized', False))
+logger.info("Has detection results: %s", 'detection_results' in st.session_state)
+if 'detection_results' in st.session_state and st.session_state.detection_results is not None:
+    logger.info("Number of detections: %d", len(st.session_state.detection_results))
+elif 'detection_results' in st.session_state:
+    logger.info("Detection results exist but are None")
+logger.info("Current state keys: %s", list(st.session_state.keys()))
+logger.info("=== End Snapshot ===")
+
+# Add async state tracking
+def log_async_state():
+    try:
+        loop = asyncio.get_event_loop()
+        logger.info("=== Async State ===")
+        logger.info("Has event loop: %s", loop is not None)
+        logger.info("Loop running: %s", loop.is_running() if loop else "No loop")
+        logger.info("Loop closed: %s", loop.is_closed() if loop else "No loop")
+        logger.info("=== End Async State ===")
+    except Exception as e:
+        logger.error("Error checking async state: %s", str(e))
+
+# Function to ensure file persistence
+def ensure_file_exists(file_path, max_retries=3, retry_delay=0.5):
+    for i in range(max_retries):
+        if os.path.exists(file_path):
+            return True
+        if i < max_retries - 1:  # Don't sleep on the last try
+            time.sleep(retry_delay)
+    return False
 
 # Class mapping
 LABEL_MAP = {
@@ -273,7 +386,6 @@ with col1:
     area_map = display_area_map()
     
     # Replace folium_static with st_folium
-    from streamlit_folium import st_folium
     map_data = st_folium(area_map, width=800, returned_objects=["all_drawings"])
     
     # Handle map data for bounding box updates
@@ -328,261 +440,548 @@ def load_model():
 
 # Function to process a single image
 def process_image(image_path, model, device, lat, lon, heading, pano_id, date):
-    image = Image.open(image_path).convert("RGB")
-    img_tensor = TF.to_tensor(image).unsqueeze(0).to(device)
-    
-    with torch.no_grad():
-        prediction = model(img_tensor)[0]
-    
-    pred_boxes = prediction["boxes"].cpu().numpy()
-    pred_labels = prediction["labels"].cpu().numpy()
-    pred_scores = prediction["scores"].cpu().numpy()
-    
-    # Filter by selected categories and their thresholds
-    filtered_indices = []
-    for i, (label, score) in enumerate(zip(pred_labels, pred_scores)):
-        category_id = int(label)
-        # Check if category is selected and meets its threshold
-        if (category_id in st.session_state.selected_categories and 
-            st.session_state.selected_categories[category_id] and
-            score >= st.session_state.category_thresholds[category_id]):
-            filtered_indices.append(i)
-    
-    # Apply filters
-    if filtered_indices:
-        pred_boxes = pred_boxes[filtered_indices]
-        pred_labels = pred_labels[filtered_indices]
-        pred_scores = pred_scores[filtered_indices]
-    else:
-        # No detections that meet criteria
-        pred_boxes = np.array([])
-        pred_labels = np.array([])
-        pred_scores = np.array([])
-    
-    detections = []
-    if len(pred_boxes) > 0:
-        # Save original image
-        filename = f"streetview_{pano_id}_{date}_{lat}_{lon}_heading{heading}.jpg"
-        original_path = os.path.join(ORIGINAL_DIR, filename)
-        predicted_path = os.path.join(PREDICTED_DIR, filename)
+    try:
+        if not ensure_file_exists(image_path):
+            logger.error(f"Image file not found after retries: {image_path}")
+            return []
         
-        image.save(original_path)
+        image = Image.open(image_path).convert("RGB")
+        img_tensor = TF.to_tensor(image).unsqueeze(0).to(device)
         
-        # Draw predictions using utility function with different thresholds per category
-        pred_image = utils_draw_predictions(
-            image.copy(), pred_boxes, pred_labels, pred_scores, 0.0  # Pass 0.0 as threshold since we already filtered
-        )
-        pred_image.save(predicted_path)
+        with torch.no_grad():
+            prediction = model(img_tensor)[0]
         
-        # Collect detection info
-        for box, label, score in zip(pred_boxes, pred_labels, pred_scores):
-            cls_name = LABEL_MAP.get(int(label), str(label))
-            detections.append({
-                "filename": filename,
-                "lat": lat,
-                "lon": lon,
-                "heading": heading,
-                "date": date,
-                "class": cls_name,
-                "confidence": round(float(score), 3),
-                "image_path": predicted_path
-            })
-    
-    return detections
+        pred_boxes = prediction["boxes"].cpu().numpy()
+        pred_labels = prediction["labels"].cpu().numpy()
+        pred_scores = prediction["scores"].cpu().numpy()
+        
+        # Filter by selected categories and their thresholds
+        filtered_indices = []
+        for i, (label, score) in enumerate(zip(pred_labels, pred_scores)):
+            category_id = int(label)
+            # Check if category is selected and meets its threshold
+            if (category_id in st.session_state.selected_categories and 
+                st.session_state.selected_categories[category_id] and
+                score >= st.session_state.category_thresholds[category_id]):
+                filtered_indices.append(i)
+        
+        # Apply filters
+        if filtered_indices:
+            pred_boxes = pred_boxes[filtered_indices]
+            pred_labels = pred_labels[filtered_indices]
+            pred_scores = pred_scores[filtered_indices]
+        else:
+            # No detections that meet criteria
+            pred_boxes = np.array([])
+            pred_labels = np.array([])
+            pred_scores = np.array([])
+        
+        detections = []
+        if len(pred_boxes) > 0:
+            # Create unique filename based on parameters
+            filename = f"streetview_{pano_id}_{date}_{lat}_{lon}_heading{heading}.jpg"
+            original_path = os.path.join(ORIGINAL_DIR, filename)
+            predicted_path = os.path.join(PREDICTED_DIR, filename)
+            
+            # Save original image with retries
+            for _ in range(3):
+                try:
+                    image.save(original_path)
+                    if ensure_file_exists(original_path):
+                        break
+                except Exception as e:
+                    logger.warning(f"Retry saving original image due to: {str(e)}")
+                    time.sleep(0.5)
+            
+            # Save predicted image with retries
+            try:
+                pred_image = utils_draw_predictions(
+                    image.copy(), pred_boxes, pred_labels, pred_scores, 0.0
+                )
+                for _ in range(3):
+                    try:
+                        pred_image.save(predicted_path)
+                        if ensure_file_exists(predicted_path):
+                            break
+                    except Exception as e:
+                        logger.warning(f"Retry saving predicted image due to: {str(e)}")
+                        time.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Could not save prediction image: {str(e)}")
+                predicted_path = original_path  # Fallback to original image
+            
+            # Verify files exist before adding to detections
+            if ensure_file_exists(predicted_path):
+                detections.append({
+                    "filename": filename,
+                    "lat": lat,
+                    "lon": lon,
+                    "heading": heading,
+                    "date": date,
+                    "class": LABEL_MAP.get(int(pred_labels[0]), str(pred_labels[0])),
+                    "confidence": round(float(pred_scores[0]), 3),
+                    "image_path": predicted_path
+                })
+        
+        return detections
+    except Exception as e:
+        logger.error(f"Error processing image {image_path}: {str(e)}")
+        return []
 
 # Run detection process
 def run_detection():
-    # Check if API key is provided
-    if not api_key:
-        st.error("Please enter your Google Street View API Key")
-        return None
-    
-    # Check if at least one category is selected
-    if not any(st.session_state.selected_categories.values()):
-        st.error("Please select at least one detection category")
-        return None
-    
-    # Add API key validation check
-    test_params = [{
-        'size': '640x640',
-        'location': '34.0522, -118.2437',  # Test with known LA coordinates
-        'heading': '0',
-        'pitch': '0',
-        'key': api_key
-    }]
-    test_result = google_streetview.api.results(test_params)
-    if test_result.metadata[0].get('status') != 'OK':
-        st.error("❌ Invalid API Key")
-        return None
-    st.success("✅ API Key Valid")
-    
-    # Generate grid points
-    latitudes = [top_left_lat + i * (bottom_right_lat - top_left_lat) / (num_rows - 1) for i in range(num_rows)]
-    longitudes = [top_left_lon + j * (bottom_right_lon - top_left_lon) / (num_cols - 1) for j in range(num_cols)]
-    grid_points = [(lat, lon) for lat in latitudes for lon in longitudes]
-    
-    # Load model
-    with st.spinner("Loading model..."):
-        model, device = load_model()
+    try:
+        log_async_state()
+        logger.info("=== Detection Start ===")
+        logger.info("Component states: %s", [k for k in st.session_state.keys() if len(k) == 64])  # Hash-like keys
         
-    # Exit if model loading failed
-    if model is None or device is None:
-        st.error("Model loading failed. Cannot continue with detection.")
-        return None
-    
-    # Initialize progress indicators
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    results_placeholder = st.empty()
-    
-    # Initialize results container
-    all_detections = []
-    processed_images = 0
-    total_images = len(grid_points) * 2  # 2 headings per point
-    
-    # Clear previous results
-    if os.path.exists(CSV_PATH):
-        os.remove(CSV_PATH)
-    
-    # Create CSV headers
-    csv_fields = ["filename", "lat", "lon", "heading", "date", "class", "confidence"]
-    pd.DataFrame(columns=csv_fields).to_csv(CSV_PATH, index=False)
-    
-    # Process each grid point
-    for idx, (lat, lon) in enumerate(grid_points):
-        for heading in [0, 180]:
-            status_text.text(f"Processing location {idx+1}/{len(grid_points)}, heading {heading}°...")
+        # Check if API key is provided
+        if not api_key:
+            st.error("Please enter your Google Street View API Key")
+            return None
+        
+        # Check if at least one category is selected
+        if not any(st.session_state.selected_categories.values()):
+            st.error("Please select at least one detection category")
+            return None
+        
+        # Add API key validation check
+        test_params = [{
+            'size': '640x640',
+            'location': '34.0522, -118.2437',  # Test with known LA coordinates
+            'heading': '0',
+            'pitch': '0',
+            'key': api_key
+        }]
+        test_result = google_streetview.api.results(test_params)
+        if test_result.metadata[0].get('status') != 'OK':
+            st.error("❌ Invalid API Key")
+            return None
+        st.success("✅ API Key Valid")
+        
+        # Generate grid points
+        latitudes = [top_left_lat + i * (bottom_right_lat - top_left_lat) / (num_rows - 1) for i in range(num_rows)]
+        longitudes = [top_left_lon + j * (bottom_right_lon - top_left_lon) / (num_cols - 1) for j in range(num_cols)]
+        grid_points = [(lat, lon) for lat in latitudes for lon in longitudes]
+        
+        # Load model
+        with st.spinner("Loading model..."):
+            model, device = load_model()
             
-            params = [{
-                'size': '640x640',
-                'location': f'{lat},{lon}',
-                'heading': str(heading),
-                'pitch': '0',
-                'key': api_key
-            }]
-            
-            try:
-                results = google_streetview.api.results(params)
+        # Exit if model loading failed
+        if model is None or device is None:
+            st.error("Model loading failed. Cannot continue with detection.")
+            return None
+        
+        # Initialize progress indicators
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        results_placeholder = st.empty()
+        
+        # Initialize results container
+        all_detections = []
+        processed_images = 0
+        total_images = len(grid_points) * 2  # 2 headings per point
+        
+        # Clear previous results
+        if os.path.exists(CSV_PATH):
+            os.remove(CSV_PATH)
+        
+        # Create CSV headers
+        csv_fields = ["filename", "lat", "lon", "heading", "date", "class", "confidence"]
+        pd.DataFrame(columns=csv_fields).to_csv(CSV_PATH, index=False)
+        
+        # Process each grid point
+        for idx, (lat, lon) in enumerate(grid_points):
+            for heading in [0, 180]:
+                status_text.text(f"Processing location {idx+1}/{len(grid_points)}, heading {heading}°...")
                 
-                if results.metadata[0]['status'] == 'OK':
-                    metadata = results.metadata[0]
-                    pano_id = metadata.get('pano_id', 'unknown')
-                    date = metadata.get('date', datetime.now().strftime('%Y-%m'))
+                params = [{
+                    'size': '640x640',
+                    'location': f'{lat},{lon}',
+                    'heading': str(heading),
+                    'pitch': '0',
+                    'key': api_key
+                }]
+                
+                try:
+                    results = google_streetview.api.results(params)
                     
-                    # Download image
-                    response = requests.get(results.links[0])
-                    temp_image_path = os.path.join(TEMP_DIR, f"temp_{pano_id}.jpg")
-                    with open(temp_image_path, 'wb') as f:
-                        f.write(response.content)
-                    
-                    # Process image
-                    detections = process_image(temp_image_path, model, device, lat, lon, heading, pano_id, date)
-                    all_detections.extend(detections)
-                    
-                    # Update CSV if detections found
-                    if detections:
-                        detection_df = pd.DataFrame(detections)
-                        detection_df[csv_fields].to_csv(CSV_PATH, mode='a', header=False, index=False)
+                    if results.metadata[0]['status'] == 'OK':
+                        metadata = results.metadata[0]
+                        pano_id = metadata.get('pano_id', 'unknown')
+                        date = metadata.get('date', datetime.now().strftime('%Y-%m'))
                         
-                        status_text.text(f"✅ Detected {len(detections)} object(s) at {lat:.6f}, {lon:.6f}, heading {heading}°")
+                        # Download image
+                        response = requests.get(results.links[0])
+                        temp_image_path = os.path.join(TEMP_DIR, f"temp_{pano_id}.jpg")
+                        with open(temp_image_path, 'wb') as f:
+                            f.write(response.content)
+                        
+                        # Process image
+                        try:
+                            detections = process_image(temp_image_path, model, device, lat, lon, heading, pano_id, date)
+                            all_detections.extend(detections)
+                            
+                            # Update CSV if detections found
+                            if detections:
+                                detection_df = pd.DataFrame(detections)
+                                detection_df[csv_fields].to_csv(CSV_PATH, mode='a', header=False, index=False)
+                                
+                                status_text.text(f"✅ Detected {len(detections)} object(s) at {lat:.6f}, {lon:.6f}, heading {heading}°")
+                            else:
+                                status_text.text(f"❌ No detections at {lat:.6f}, {lon:.6f}, heading {heading}°")
+                        except Exception as e:
+                            st.error(f"Error processing image: {str(e)}")
+                            if DEBUG:
+                                st.write(f"Detailed error: {str(e)}")
+                        finally:
+                            # Clean up temp file
+                            if os.path.exists(temp_image_path):
+                                try:
+                                    os.remove(temp_image_path)
+                                except Exception as e:
+                                    if DEBUG:
+                                        st.write(f"Error removing temp file: {str(e)}")
                     else:
-                        status_text.text(f"❌ No detections at {lat:.6f}, {lon:.6f}, heading {heading}°")
+                        status_text.text(f"No image available for {lat:.6f}, {lon:.6f}, heading {heading}°")
                     
-                    # Clean up temp file
-                    os.remove(temp_image_path)
+                    # Update progress
+                    processed_images += 1
+                    progress_bar.progress(processed_images / total_images)
                     
-                else:
-                    status_text.text(f"No image available for {lat:.6f}, {lon:.6f}, heading {heading}°")
-                
-                # Update progress
-                processed_images += 1
-                progress_bar.progress(processed_images / total_images)
-                
-                # Add a small delay to avoid API rate limits
-                time.sleep(0.5)
-                
-            except Exception as e:
-                status_text.text(f"Error processing {lat:.6f}, {lon:.6f}, heading {heading}°: {str(e)}")
-                processed_images += 1
-                progress_bar.progress(processed_images / total_images)
+                    # Add a small delay to avoid API rate limits
+                    time.sleep(0.5)
+                    
+                except Exception as e:
+                    st.error(f"Error processing location {lat}, {lon}: {str(e)}")
+                    processed_images += 1
+                    progress_bar.progress(processed_images / total_images)
+        
+        # Clean up temp directory
+        try:
+            shutil.rmtree(TEMP_DIR)
+            os.makedirs(TEMP_DIR, exist_ok=True)
+        except Exception as e:
+            if DEBUG:
+                st.write(f"Error cleaning up temp directory: {str(e)}")
+        
+        # Complete progress
+        progress_bar.progress(1.0)
+        status_text.text("Processing completed.")
+        
+        # Log detection results
+        logger.info("Detection completed with %d total detections", len(all_detections))
+        logger.info("Session state before returning: %s", list(st.session_state.keys()))
+        
+        # After detection completes
+        logger.info("=== Detection Complete ===")
+        logger.info("Results added to session state: %s", 'detection_results' in st.session_state)
+        logger.info("Component states after detection: %s", [k for k in st.session_state.keys() if len(k) == 64])
+        return all_detections
     
-    # Complete progress
-    progress_bar.progress(1.0)
-    status_text.text("Processing completed.")
-    
-    return all_detections
+    except Exception as e:
+        st.error(f"An error occurred during detection: {str(e)}")
+        if DEBUG:
+            st.write(f"Detailed error: {str(e)}")
+        return None
+
+# Add resource tracking helper function
+def track_resource(resource_path, resource_type="file"):
+    """Log and track a resource path"""
+    if resource_path and os.path.exists(resource_path):
+        stats = os.stat(resource_path)
+        logger.info(
+            f"RESOURCE TRACK [{resource_type}]: {resource_path} "
+            f"(exists={os.path.exists(resource_path)}, "
+            f"size={stats.st_size}, modified={stats.st_mtime})"
+        )
+    else:
+        logger.warning(f"RESOURCE TRACK [{resource_type}]: {resource_path} (missing)")
+    return resource_path
 
 # Function to display results on a map - leveraging utility function
 def display_results_map(detections):
     if not detections:
         st.warning("No detections found in the selected area.")
-        return
+        return None, None, None
+    
+    # Verify all image paths exist with retries
+    valid_detections = []
+    for d in detections:
+        if 'image_path' in d and ensure_file_exists(d['image_path']):
+            valid_detections.append(d)
+        else:
+            logger.warning(f"Missing or invalid image: {d.get('image_path', 'unknown')}")
+    
+    if not valid_detections:
+        st.error("No valid images found for map display.")
+        return None, None, None
     
     # Create map with center on the selected area
     center_lat = (top_left_lat + bottom_right_lat) / 2
     center_lon = (top_left_lon + bottom_right_lon) / 2
     
-    return create_detection_map(detections, center_lat, center_lon)
+    try:
+        logger.info("=== MAP RESOURCE TRACKING ===")
+        # Track folium temp directory
+        folium_temp = None
+        folium_frame = inspect.currentframe()
+        while folium_frame:
+            if 'self' in folium_frame.f_locals and hasattr(folium_frame.f_locals['self'], '_parent'):
+                folium_obj = folium_frame.f_locals['self']
+                logger.info(f"Found folium object: {type(folium_obj).__name__}")
+                break
+            folium_frame = folium_frame.f_back
+        
+        # Generate a session-specific id for resources
+        map_resource_id = str(uuid.uuid4())[:8]
+        logger.info(f"Map resource tracking ID: {map_resource_id}")
+        
+        # Create map with resource tracking
+        results_map = create_detection_map(valid_detections, center_lat, center_lon)
+        
+        # Log HTML output directory
+        temp_dir = tempfile.gettempdir()
+        logger.info(f"System temp directory: {temp_dir}")
+        for file in Path(temp_dir).glob("*.html"):
+            if file.stat().st_mtime > (time.time() - 300):  # Modified in last 5 minutes
+                track_resource(str(file), "html")
+        
+        # Log detection image paths
+        for i, d in enumerate(valid_detections[:3]):  # Log first 3 detections
+            if 'image_path' in d:
+                track_resource(d['image_path'], f"detection_{i}")
+        
+        logger.info("Created map with %d valid detections", len(valid_detections))
+        logger.info("=== END MAP RESOURCE TRACKING ===")
+        return results_map, valid_detections, map_resource_id
+    except Exception as e:
+        logger.error(f"Error creating map: {str(e)}")
+        return None, None, None
 
 # Function to display summary statistics - leveraging utility function
 def display_summary_stats(detections):
     if not detections:
+        st.warning("No detections to display in statistics.")
         return None, None, {}
     
-    return create_summary_charts(detections)
+    # Verify all detections have valid images
+    valid_detections = []
+    for d in detections:
+        if 'image_path' in d and os.path.exists(d['image_path']):
+            valid_detections.append(d)
+    
+    if not valid_detections:
+        st.warning("No valid images found for statistics.")
+        return None, None, {}
+    
+    try:
+        fig, fig2, class_counts = create_summary_charts(valid_detections)
+        return fig, fig2, class_counts
+    except Exception as e:
+        st.error(f"Error creating summary charts: {str(e)}")
+        # Return empty placeholders
+        return None, None, {}
 
-# Run button
+# Create a persistent results placeholder in session state
+if 'results_displayed' not in st.session_state:
+    st.session_state.results_displayed = False
+
+# Cache map generation
+@st.cache_data(ttl=3600, show_spinner=False)
+def generate_cached_map_html(detections, center_lat, center_lon):
+    """Generate and cache the map HTML to prevent it from disappearing"""
+    try:
+        if not detections:
+            return None
+        
+        # Create the map using existing function
+        map_obj = create_detection_map(detections, center_lat, center_lon)
+        
+        # Save the map to HTML string
+        map_data = BytesIO()
+        map_obj.save(map_data, close_file=False)
+        map_data.seek(0)
+        html_string = map_data.read().decode()
+        
+        # Also save individual detection images to base64 for display
+        detection_images = []
+        for i, d in enumerate(detections):
+            if 'image_path' in d and os.path.exists(d['image_path']):
+                try:
+                    with open(d['image_path'], "rb") as img_file:
+                        img_data = base64.b64encode(img_file.read()).decode()
+                        detection_images.append({
+                            "data": img_data,
+                            "lat": d['lat'],
+                            "lon": d['lon'],
+                            "class": d['class'],
+                            "confidence": d['confidence']
+                        })
+                except Exception as e:
+                    logger.error(f"Error encoding image {d['image_path']}: {e}")
+        
+        return {
+            "html": html_string,
+            "detection_count": len(detections),
+            "detection_images": detection_images
+        }
+    except Exception as e:
+        logger.error(f"Error generating cached map: {e}")
+        return None
+
+# Function to display cached map
+def display_cached_map(cached_map):
+    """Display the cached map and detection images"""
+    if not cached_map:
+        st.warning("No map data available")
+        return
+    
+    # Display the map using HTML
+    st.components.v1.html(cached_map["html"], height=600, scrolling=False)
+    
+    # Also display detection images as a fallback
+    if cached_map["detection_images"]:
+        st.subheader(f"Detection Images ({len(cached_map['detection_images'])} found)")
+        
+        # Create a 3-column grid for images
+        cols = st.columns(3)
+        
+        # Display each detection image
+        for i, img in enumerate(cached_map["detection_images"]):
+            col_idx = i % 3
+            with cols[col_idx]:
+                st.image(
+                    f"data:image/jpeg;base64,{img['data']}", 
+                    caption=f"{img['class']} ({img['confidence']:.2f}) at {img['lat']:.6f}, {img['lon']:.6f}",
+                    use_container_width=True
+                )
+
+# Modify the run button section to use our cached approach
 if st.button("Run Detection", type="primary", disabled=not can_run_detection or not any(st.session_state.selected_categories.values())):
     with st.spinner("Running detection process..."):
-        detections = run_detection()
+        # Get detection results
+        detection_results = run_detection()
+        
+        # Store in session state
+        st.session_state.detection_results = detection_results
+        
+        if detection_results:
+            # Generate and cache map immediately
+            center_lat = (top_left_lat + bottom_right_lat) / 2
+            center_lon = (top_left_lon + bottom_right_lon) / 2
+            
+            cached_map = generate_cached_map_html(detection_results, center_lat, center_lon)
+            
+            # Store cached map in session state
+            st.session_state.cached_map = cached_map
+            
+            # Mark that results should be displayed
+            st.session_state.results_displayed = True
+            
+            # Force a rerun with the cached data ready
+            st.rerun()
+
+# After the button, check if we should display results
+if st.session_state.get('results_displayed', False) and 'cached_map' in st.session_state:
+    st.success(f"Detection completed. Found {len(st.session_state.detection_results)} objects.")
     
-    if detections:
-        st.success(f"Detection completed. Found {len(detections)} objects in {len(set(d['filename'] for d in detections))} images.")
-        
-        # Display results on tabs
-        tab1, tab2, tab3 = st.tabs(["Map", "Statistics", "Raw Data"])
-        
-        with tab1:
-            st.subheader("Detection Map")
-            results_map = display_results_map(detections)
-            folium_static(results_map, width=1200, height=800)
-        
-        with tab2:
-            st.subheader("Summary Statistics")
-            if detections:
-                fig, fig2, class_counts = display_summary_stats(detections)
-                
+    # Create tabs for results
+    tab1, tab2, tab3 = st.tabs(["Map", "Statistics", "Raw Data"])
+    
+    with tab1:
+        st.subheader("Detection Map")
+        # Use the cached map instead of regenerating
+        display_cached_map(st.session_state.cached_map)
+    
+    with tab2:
+        st.subheader("Summary Statistics")
+        if st.session_state.detection_results:
+            fig, fig2, class_counts = display_summary_stats(st.session_state.detection_results)
+            
+            if fig and fig2:
                 col1, col2 = st.columns(2)
                 with col1:
                     st.pyplot(fig)
                 
                 with col2:
                     st.subheader("Detection Counts")
-                    for cls, count in class_counts.items():
-                        st.metric(cls, count)
-                
-                st.subheader("Confidence Score Distribution")
-                st.pyplot(fig2)
-        
-        with tab3:
-            st.subheader("Raw Detection Data")
-            st.dataframe(pd.DataFrame(detections))
+                    if class_counts:
+                        for cls, count in class_counts.items():
+                            st.metric(cls, count)
+                    else:
+                        st.warning("No class counts available")
             
-            if os.path.exists(CSV_PATH):
-                with open(CSV_PATH, "rb") as f:
-                    csv_data = f.read()
-                
-                st.download_button(
-                    label="Download CSV",
-                    data=csv_data,
-                    file_name="homeless_detections.csv",
-                    mime="text/csv"
-                )
-    else:
-        st.warning("No detections found in the selected area.")
+            st.subheader("Confidence Score Distribution")
+            st.pyplot(fig2)
+        else:
+            st.warning("No detections found for statistics display")
+    
+    with tab3:
+        st.subheader("Raw Detection Data")
+        st.dataframe(pd.DataFrame(st.session_state.detection_results))
+        
+        if os.path.exists(CSV_PATH):
+            with open(CSV_PATH, "rb") as f:
+                csv_data = f.read()
+            
+            st.download_button(
+                label="Download CSV",
+                data=csv_data,
+                file_name="homeless_detections.csv",
+                mime="text/csv"
+            )
 elif not can_run_detection:
     st.error("Cannot run detection: No valid model available. Please add model file(s) to the 'models' directory.")
 
 # Footer
 st.markdown("---")
-st.markdown("Homeless Detection System - Powered by Streamlit and PyTorch") 
+st.markdown("Homeless Detection System - Powered by Streamlit and PyTorch")
+
+# After results display
+logger.info("=== Final State Check ===")
+logger.info("Session still initialized: %s", st.session_state.get('initialized', False))
+logger.info("Results still present: %s", 'detection_results' in st.session_state)
+logger.info("Final state keys: %s", list(st.session_state.keys()))
+logger.info("=== End Final Check ===")
+
+# At the end of the file
+log_async_state()
+logger.info("=== Final Component State ===")
+logger.info("Final component states: %s", [k for k in st.session_state.keys() if len(k) == 64])
+
+# Add resource verification in final checks
+logger.info("=== Final Resource Verification ===")
+if 'detection_map' in st.session_state and st.session_state['detection_map'].get('resource_id'):
+    resource_id = st.session_state['detection_map']['resource_id']
+    logger.info(f"Final map resource check, ID: {resource_id}")
+    
+    # Check temp directory for html files
+    temp_dir = tempfile.gettempdir()
+    html_count = 0
+    for file in Path(temp_dir).glob("*.html"):
+        if file.stat().st_mtime > (time.time() - 300):
+            track_resource(str(file), "final_html")
+            html_count += 1
+    
+    logger.info(f"Found {html_count} recent HTML files in temp directory")
+    
+    # Check if detection results still exist
+    if 'detection_results' in st.session_state and st.session_state.detection_results is not None:
+        valid_count = 0
+        for d in st.session_state.detection_results:
+            if 'image_path' in d and os.path.exists(d['image_path']):
+                valid_count += 1
+        
+        logger.info(f"Final detection file check: {valid_count}/{len(st.session_state.detection_results)} still valid")
+    elif 'detection_results' in st.session_state:
+        logger.info("Detection results exist in session state but are None")
+    else:
+        logger.info("No detection results in session state")
+logger.info("=== End Final Resource Verification ===")
+
+# At the end of the file
+log_async_state()
+logger.info("=== Final Component State ===")
+logger.info("Final component states: %s", [k for k in st.session_state.keys() if len(k) == 64]) 
