@@ -29,21 +29,6 @@ The system processes images from a grid of locations within a specified area, ru
 
 ## Installation
 
-### Basic Installation
-
-1. Clone this repository:
-```
-git clone <repository-url>
-cd homeless-detection-system
-```
-
-2. Install the required dependencies:
-```
-pip install -r requirements.txt
-```
-
-3. Make sure the model file `model_final_2.pth` is in the project root directory.
-
 ### Using Virtual Environment (Recommended)
 
 1. Clone the repository:
@@ -68,7 +53,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-4. Make sure the model file `model_final_2.pth` is in the project root directory.
+1. Make sure to park your model inside the `models` directory. This app will provide dropdown option to select any one model if parked more than one.
 
 ## API Setup
 
@@ -82,12 +67,6 @@ This application requires a Google Street View API key to fetch images. To obtai
 6. Set up billing for your Google Cloud project (required for API usage)
 
 Once you have your API key, you can enter it in the application's sidebar when running the app.
-
-**Important Notes about the API Key:**
-- Keep your API key secure and don't share it publicly
-- The Google Street View API is a paid service with usage limits
-- Monitor your usage in the Google Cloud Console to avoid unexpected charges
-- Consider setting usage limits and restrictions on your API key
 
 ## Usage
 
