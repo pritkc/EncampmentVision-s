@@ -171,6 +171,78 @@ CATEGORY_DISPLAY = {
     4: "Homeless Bikes"
 }
 
+# Add color mapping for categories
+CATEGORY_COLORS = {
+    1: (255, 0, 0),    # Red for Homeless People
+    2: (0, 255, 0),    # Green for Homeless Encampments
+    3: (0, 0, 255),    # Blue for Homeless Carts
+    4: (255, 165, 0)   # Orange for Homeless Bikes
+}
+
+# Add short names for more compact labels
+SHORT_LABELS = {
+    1: "Person",
+    2: "Camp",
+    3: "Cart",
+    4: "Bike" 
+}
+
+# Custom draw predictions function with color support
+def draw_predictions_with_colors(image, boxes, labels, scores, threshold=0.5):
+    """Draw bounding boxes on the image with different colors per category"""
+    draw = ImageDraw.Draw(image)
+    
+    # Try to load a smaller font
+    try:
+        font = ImageFont.truetype("arial.ttf", 12)
+    except IOError:
+        try:
+            # Try to load system font
+            font = ImageFont.load_default()
+        except:
+            # Create a very simple font as fallback
+            font = None
+    
+    # Draw each prediction
+    for box, label, score in zip(boxes, labels, scores):
+        if score >= threshold:
+            # Get category ID and corresponding color
+            category_id = int(label)
+            color = CATEGORY_COLORS.get(category_id, (255, 0, 0))  # Default to red if not found
+            
+            # Draw box with category-specific color
+            box = [int(i) for i in box]
+            draw.rectangle(box, outline=color, width=2)  # Thinner line
+            
+            # Use a shorter label
+            short_name = SHORT_LABELS.get(category_id, str(category_id))
+            text = f"{short_name}:{score:.2f}"
+            
+            # Get text size
+            if font:
+                text_size = draw.textbbox((0, 0), text, font=font)[2:4]
+            else:
+                # Estimate size if no font available
+                text_size = (len(text) * 6, 12)
+            
+            # Create label background
+            bg_box = (box[0], box[1] - text_size[1] - 2, box[0] + text_size[0] + 4, box[1])
+            
+            # Determine text color based on background
+            if category_id in [2, 4]:  # Green and Orange
+                text_color = (0, 0, 0)  # Black text for better contrast
+            else:
+                text_color = (255, 255, 255)  # White text
+            
+            # Draw label above the box instead of inside
+            draw.rectangle(bg_box, fill=color)
+            if font:
+                draw.text((box[0] + 2, box[1] - text_size[1] - 2), text, fill=text_color, font=font)
+            else:
+                draw.text((box[0] + 2, box[1] - text_size[1] - 2), text, fill=text_color)
+    
+    return image
+
 # Sidebar for input parameters
 st.sidebar.title("Homeless Detection System")
 st.sidebar.info("This application detects homeless-related objects in Google Street View images")
@@ -495,7 +567,7 @@ def process_image(image_path, model, device, lat, lon, heading, pano_id, date):
             
             # Save predicted image with retries
             try:
-                pred_image = utils_draw_predictions(
+                pred_image = draw_predictions_with_colors(
                     image.copy(), pred_boxes, pred_labels, pred_scores, 0.0
                 )
                 for _ in range(3):
