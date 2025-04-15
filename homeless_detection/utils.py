@@ -16,30 +16,61 @@ LABEL_MAP = {
     4: "Homeless_Bike"
 }
 
-def load_model(model_path, device=None):
+def load_model(model_path=None, device=None):
     """
     Load the trained model from path
     
     Args:
-        model_path (str): Path to the model file
-        device (torch.device): Device to load model on
+        model_path (str, optional): Path to the model file. If None, will search in the models directory.
+        device (torch.device, optional): Device to load model on
         
     Returns:
         model: Loaded PyTorch model
         device: Device the model is loaded on
+        
+    Raises:
+        FileNotFoundError: If model file or models directory doesn't exist
+        ValueError: If no appropriate model file is found
     """
     from torchvision.models.detection import fasterrcnn_resnet50_fpn
+    import sys
     
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     num_classes = 5  # Background + 4 classes
     model = fasterrcnn_resnet50_fpn(weights=None, num_classes=num_classes)
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
-    model.eval()
     
-    return model, device
+    # If no model path provided, look in models directory
+    if model_path is None:
+        models_dir = "models"
+        if not os.path.exists(models_dir):
+            raise FileNotFoundError(f"Models directory '{models_dir}' not found. Please create this directory.")
+        
+        # Find all .pth files in the models directory
+        model_files = [f for f in os.listdir(models_dir) if f.endswith('.pth')]
+        
+        if not model_files:
+            raise ValueError(f"No model files (.pth) found in '{models_dir}' directory. Please add a model file.")
+        elif len(model_files) > 1:
+            print(f"Warning: Multiple model files found in '{models_dir}': {', '.join(model_files)}")
+            print(f"Using the first model: {model_files[0]}")
+            model_path = os.path.join(models_dir, model_files[0])
+        else:
+            model_path = os.path.join(models_dir, model_files[0])
+            print(f"Using model: {model_files[0]}")
+    
+    # Ensure the file exists
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model file '{model_path}' not found.")
+    
+    try:
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.to(device)
+        model.eval()
+        return model, device
+    except Exception as e:
+        raise ValueError(f"Error loading model from {model_path}: {str(e)}")
 
 def draw_predictions(image, boxes, labels, scores, score_thresh=0.5):
     """

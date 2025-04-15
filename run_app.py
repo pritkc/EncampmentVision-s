@@ -19,13 +19,29 @@ def main():
     
     args = parser.parse_args()
     
-    # Check if model file exists
-    model_path = "model_final_2.pth"
-    if not os.path.exists(model_path):
-        print(f"[WARNING] Model file {model_path} not found. Application may not work correctly.")
+    # Check if model files exist in models directory
+    models_dir = "models"
+    if not os.path.exists(models_dir):
+        print(f"[WARNING] Models directory '{models_dir}' not found. Please create this directory.")
         cont = input("Continue anyway? (y/n): ")
         if cont.lower() != 'y':
             return
+    else:
+        # Find all .pth files in the models directory
+        model_files = [f for f in os.listdir(models_dir) if f.endswith('.pth')]
+        
+        if not model_files:
+            print(f"[WARNING] No model files (.pth) found in '{models_dir}' directory. Please add a model file.")
+            cont = input("Continue anyway? (y/n): ")
+            if cont.lower() != 'y':
+                return
+        elif len(model_files) > 1:
+            print(f"[INFO] Multiple model files found in '{models_dir}': {', '.join(model_files)}")
+            print(f"[INFO] The application will allow you to select which model to use.")
+        else:
+            print(f"[INFO] Using model: {model_files[0]}")
+            if model_files[0] != "model_final_2.pth":
+                print(f"[INFO] Note: The recommended filename is 'model_final_2.pth'")
     
     # Install dependencies if requested
     if args.install:

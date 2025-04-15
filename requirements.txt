@@ -12,3 +12,4 @@ numpy>=1.24.0
 shapely>=2.0.1
 geopandas>=0.13.2
 argparse>=1.4.0 
+watchdog>=2.2.0

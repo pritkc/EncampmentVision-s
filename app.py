@@ -70,9 +70,34 @@ num_cols = st.sidebar.slider("Number of Columns", min_value=2, max_value=10, val
 confidence_threshold = st.sidebar.slider("Confidence Threshold", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
 
 # Model selection
-model_path = "model_final_2.pth"
-if not os.path.exists(model_path):
-    st.error(f"Model file {model_path} not found. Please make sure the model file is in the correct location.")
+# model_path = "model_final_2.pth"
+# if not os.path.exists(model_path):
+#     st.error(f"Model file {model_path} not found. Please make sure the model file is in the correct location.")
+
+# Look for models in the models directory
+models_dir = "models"
+if not os.path.exists(models_dir):
+    st.error(f"Models directory '{models_dir}' not found. Please create this directory.")
+    model_path = None
+    can_run_detection = False
+else:
+    # Find all .pth files in the models directory
+    model_files = [f for f in os.listdir(models_dir) if f.endswith('.pth')]
+    
+    if not model_files:
+        st.error(f"No model files (.pth) found in '{models_dir}' directory. Please add a model file.")
+        model_path = None
+        can_run_detection = False
+    else:
+        # Always show model selector in sidebar
+        st.sidebar.subheader("Model Selection")
+        selected_model = st.sidebar.selectbox(
+            "Select model to use:", 
+            model_files
+        )
+        model_path = os.path.join(models_dir, selected_model)
+        can_run_detection = True
+        
 
 # Main content area
 st.title("Homeless Detection from Google Street View")
@@ -145,7 +170,14 @@ with col2:
 # Function to load model - use the utility function with Streamlit caching
 @st.cache_resource
 def load_model():
-    return utils_load_model(model_path)
+    try:
+        if model_path is None:
+            st.error("No valid model path available.")
+            return None, None
+        return utils_load_model(model_path)
+    except Exception as e:
+        st.error(f"Error loading model: {str(e)}")
+        return None, None
 
 # Function to process a single image
 def process_image(image_path, model, device, lat, lon, heading, pano_id, date):
@@ -201,7 +233,7 @@ def run_detection():
     # Check if API key is provided
     if not api_key:
         st.error("Please enter your Google Street View API Key")
-        return
+        return None
     
     # Generate grid points
     latitudes = [top_left_lat + i * (bottom_right_lat - top_left_lat) / (num_rows - 1) for i in range(num_rows)]
@@ -211,6 +243,11 @@ def run_detection():
     # Load model
     with st.spinner("Loading model..."):
         model, device = load_model()
+        
+    # Exit if model loading failed
+    if model is None or device is None:
+        st.error("Model loading failed. Cannot continue with detection.")
+        return None
     
     # Initialize progress indicators
     progress_bar = st.progress(0)
@@ -316,7 +353,7 @@ def display_summary_stats(detections):
     return create_summary_charts(detections)
 
 # Run button
-if st.button("Run Detection", type="primary"):
+if st.button("Run Detection", type="primary", disabled=not can_run_detection):
     with st.spinner("Running detection process..."):
         detections = run_detection()
     
@@ -364,6 +401,8 @@ if st.button("Run Detection", type="primary"):
                 )
     else:
         st.warning("No detections found in the selected area.")
+elif not can_run_detection:
+    st.error("Cannot run detection: No valid model available. Please add model file(s) to the 'models' directory.")
 
 # Footer
 st.markdown("---")
