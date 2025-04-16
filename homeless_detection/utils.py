@@ -7,8 +7,11 @@ import folium
 import base64
 from io import BytesIO
 import matplotlib.pyplot as plt
+from .model_adapter import get_model_adapter, draw_predictions
+from folium.plugins import MarkerCluster
+import numpy as np
 
-# Class mapping
+# Class mapping matching notebook
 LABEL_MAP = {
     1: "Homeless_People",
     2: "Homeless_Encampments",
@@ -17,64 +20,14 @@ LABEL_MAP = {
 }
 
 def load_model(model_path=None, device=None):
-    """
-    Load the trained model from path
-    
-    Args:
-        model_path (str, optional): Path to the model file. If None, will search in the models directory.
-        device (torch.device, optional): Device to load model on
-        
-    Returns:
-        model: Loaded PyTorch model
-        device: Device the model is loaded on
-        
-    Raises:
-        FileNotFoundError: If model file or models directory doesn't exist
-        ValueError: If no appropriate model file is found
-    """
-    from torchvision.models.detection import fasterrcnn_resnet50_fpn
-    import sys
-    
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    num_classes = 5  # Background + 4 classes
-    model = fasterrcnn_resnet50_fpn(weights=None, num_classes=num_classes)
-    
-    # If no model path provided, look in models directory
-    if model_path is None:
-        models_dir = "models"
-        if not os.path.exists(models_dir):
-            raise FileNotFoundError(f"Models directory '{models_dir}' not found. Please create this directory.")
-        
-        # Find all .pth files in the models directory
-        model_files = [f for f in os.listdir(models_dir) if f.endswith('.pth')]
-        
-        if not model_files:
-            raise ValueError(f"No model files (.pth) found in '{models_dir}' directory. Please add a model file.")
-        elif len(model_files) > 1:
-            print(f"Warning: Multiple model files found in '{models_dir}': {', '.join(model_files)}")
-            print(f"Using the first model: {model_files[0]}")
-            model_path = os.path.join(models_dir, model_files[0])
-        else:
-            model_path = os.path.join(models_dir, model_files[0])
-            print(f"Using model: {model_files[0]}")
-    
-    # Ensure the file exists
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model file '{model_path}' not found.")
-    
-    try:
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        model.to(device)
-        model.eval()
-        return model, device
-    except Exception as e:
-        raise ValueError(f"Error loading model from {model_path}: {str(e)}")
+    """Load model using adapter"""
+    adapter = get_model_adapter()
+    model, device, _ = adapter.load_model(model_path, device)
+    return adapter, device
 
 def draw_predictions(image, boxes, labels, scores, score_thresh=0.5):
     """
-    Draw bounding boxes and labels on an image
+    Draw bounding boxes and labels on an image (now using the adapter)
     
     Args:
         image (PIL.Image): Image to draw on
@@ -86,197 +39,133 @@ def draw_predictions(image, boxes, labels, scores, score_thresh=0.5):
     Returns:
         PIL.Image: Image with bounding boxes drawn
     """
-    draw = ImageDraw.Draw(image)
+    # Use the adapter's draw_predictions function
+    return draw_predictions(image, boxes, labels, scores, score_thresh)
+
+def process_image(image_path, model_adapter, device, confidence_threshold=0.5):
+    """Process a single image with the detection model"""
     try:
-        font = ImageFont.truetype("arial.ttf", 20)
-    except:
-        font = ImageFont.load_default()
-    
-    for i, box in enumerate(boxes):
-        if scores[i] < score_thresh:
-            continue
-        xmin, ymin, xmax, ymax = box
-        cls_id = int(labels[i])
-        cls_name = LABEL_MAP.get(cls_id, str(cls_id))
-        draw.rectangle([xmin, ymin, xmax, ymax], outline=(255, 0, 0), width=3)
-        draw.text((xmin, ymin - 10), f"{cls_name} {scores[i]:.2f}", fill=(255, 0, 0), font=font)
-    
-    return image
-
-def process_image(image_path, model, device, confidence_threshold=0.5):
-    """
-    Process a single image with the detection model
-    
-    Args:
-        image_path (str): Path to the image file
-        model: PyTorch model
-        device: Device the model is loaded on
-        confidence_threshold (float): Confidence threshold
+        # Load and preprocess image
+        image = Image.open(image_path).convert("RGB")
         
-    Returns:
-        tuple: (pred_boxes, pred_labels, pred_scores)
-    """
-    image = Image.open(image_path).convert("RGB")
-    img_tensor = TF.to_tensor(image).unsqueeze(0).to(device)
-    
-    with torch.no_grad():
-        prediction = model(img_tensor)[0]
-    
-    pred_boxes = prediction["boxes"].cpu().numpy()
-    pred_labels = prediction["labels"].cpu().numpy()
-    pred_scores = prediction["scores"].cpu().numpy()
-    
-    # Filter by confidence threshold
-    mask = pred_scores >= confidence_threshold
-    pred_boxes = pred_boxes[mask]
-    pred_labels = pred_labels[mask]
-    pred_scores = pred_scores[mask]
-    
-    return pred_boxes, pred_labels, pred_scores, image
-
-def create_detection_map(detections, center_lat=None, center_lon=None):
-    """
-    Create a folium map with detection markers
-    
-    Args:
-        detections (list): List of detection dictionaries
-        center_lat (float): Center latitude for the map
-        center_lon (float): Center longitude for the map
+        # Get predictions using adapter
+        pred_boxes, pred_labels, pred_scores = model_adapter.predict(
+            image, 
+            confidence_threshold=confidence_threshold
+        )
         
-    Returns:
-        folium.Map: Map with detection markers
-    """
-    if not detections:
-        return None
-    
-    # Group detections by location and heading
-    location_groups = {}
-    for det in detections:
-        key = f"{det['lat']}_{det['lon']}_{det['heading']}"
-        if key not in location_groups:
-            location_groups[key] = {
-                "lat": det["lat"],
-                "lon": det["lon"],
-                "heading": det["heading"],
-                "filename": det["filename"],
-                "image_path": det["image_path"],
-                "detections": []
-            }
-        location_groups[key]["detections"].append(det)
-    
-    # Determine map center
-    if center_lat is None or center_lon is None:
-        first_loc = next(iter(location_groups.values()))
-        center_lat = first_loc["lat"]
-        center_lon = first_loc["lon"]
-    
-    # Create map
+        return pred_boxes, pred_labels, pred_scores, image
+    except Exception as e:
+        print(f"Error processing image: {str(e)}")
+        return np.array([]), np.array([]), np.array([]), None
+
+def create_detection_map(detections, center_lat, center_lon):
+    """Create a map with detection markers"""
+    # Create map centered on the area
     m = folium.Map(location=[center_lat, center_lon], zoom_start=16)
     
-    # Add markers for each location with detections
-    for key, info in location_groups.items():
-        # Count detections by class
-        class_counts = {}
-        for det in info["detections"]:
-            cls = det["class"]
-            class_counts[cls] = class_counts.get(cls, 0) + 1
-        
-        # Create popup content
-        popup_html = f"""
-        <div style="width:640px; text-align:center;">
-            <h3>Detections at {info['lat']:.6f}, {info['lon']:.6f}</h3>
-            <p>Heading: {info['heading']}°</p>
-            <p><b>Detections:</b> {len(info['detections'])} object(s)</p>
-            <ul style="text-align:left;">
-        """
-        
-        for cls, count in class_counts.items():
-            popup_html += f"<li>{cls}: {count}</li>"
-        
-        popup_html += "</ul>"
-        
-        # Add image to popup if it exists
-        if "image_path" in info and os.path.exists(info["image_path"]):
-            with open(info["image_path"], "rb") as img_file:
-                encoded_image = base64.b64encode(img_file.read()).decode("utf-8")
-                popup_html += f'<img src="data:image/jpeg;base64,{encoded_image}" width="600">'
-        
-        popup_html += "</div>"
-        
-        # Create popup
-        popup = folium.Popup(folium.Html(popup_html, script=True), max_width=650)
-        
-        # Determine marker color based on detection classes
-        color = "red"
-        if "Homeless_Encampments" in class_counts:
-            color = "darkred"
-        elif "Homeless_People" in class_counts:
-            color = "red"
-        elif "Homeless_Cart" in class_counts or "Homeless_Bike" in class_counts:
-            color = "orange"
-        
-        # Add marker to map
-        folium.Marker(
-            location=[info["lat"], info["lon"]],
-            popup=popup,
-            icon=folium.Icon(color=color, icon="info-sign"),
-            tooltip=f"{sum(class_counts.values())} detections"
-        ).add_to(m)
+    # Add marker cluster
+    marker_cluster = MarkerCluster().add_to(m)
+    
+    # Color mapping matching notebook
+    color_map = {
+        "Homeless_People": "red",
+        "Homeless_Encampments": "green",
+        "Homeless_Cart": "blue",
+        "Homeless_Bike": "yellow"
+    }
+    
+    # Add markers for each detection
+    for d in detections:
+        if all(k in d for k in ['lat', 'lon', 'class', 'confidence']):
+            # Get color for class
+            color = color_map.get(d['class'], 'gray')
+            
+            # Create popup content
+            popup_html = f"""
+            <div style="width:200px">
+                <h4>{d['class']}</h4>
+                <p>Confidence: {d['confidence']:.3f}</p>
+                <p>Location: {d['lat']:.6f}, {d['lon']:.6f}</p>
+            """
+            
+            # Add image if available
+            if 'image_path' in d and os.path.exists(d['image_path']):
+                try:
+                    with open(d['image_path'], 'rb') as img_file:
+                        encoded = base64.b64encode(img_file.read()).decode()
+                        popup_html += f'<img src="data:image/jpeg;base64,{encoded}" width="100%">'
+                except Exception as e:
+                    print(f"Error encoding image: {str(e)}")
+            
+            popup_html += "</div>"
+            
+            # Add marker to cluster
+            folium.Marker(
+                location=[d['lat'], d['lon']],
+                popup=folium.Popup(popup_html, max_width=300),
+                tooltip=f"{d['class']} ({d['confidence']:.2f})",
+                icon=folium.Icon(color=color, icon='info-sign')
+            ).add_to(marker_cluster)
     
     return m
 
 def create_summary_charts(detections):
-    """
-    Create summary charts for detections
-    
-    Args:
-        detections (list): List of detection dictionaries
-        
-    Returns:
-        tuple: (pie_chart, histogram, class_counts)
-    """
+    """Create summary charts for detections"""
     if not detections:
         return None, None, {}
     
-    # Create DataFrame
-    df = pd.DataFrame(detections)
+    # Extract data
+    classes = []
+    confidences = []
+    for d in detections:
+        if 'class' in d and 'confidence' in d:
+            classes.append(d['class'])
+            confidences.append(d['confidence'])
     
-    # Count by class
-    class_counts = df['class'].value_counts().to_dict()
+    if not classes:
+        return None, None, {}
+    
+    # Count classes
+    class_counts = {}
+    for cls in classes:
+        class_counts[cls] = class_counts.get(cls, 0) + 1
     
     # Create pie chart
-    fig1, ax1 = plt.subplots(figsize=(8, 8))
-    ax1.pie(
-        class_counts.values(),
-        labels=class_counts.keys(),
+    plt.style.use('seaborn')
+    fig, ax = plt.subplots(figsize=(10, 6))
+    colors = ['red', 'green', 'blue', 'yellow']
+    wedges, texts, autotexts = ax.pie(
+        list(class_counts.values()),
+        labels=list(class_counts.keys()),
         autopct='%1.1f%%',
         startangle=90,
-        colors=['#ff9999', '#66b3ff', '#99ff99', '#ffcc99']
+        colors=colors
     )
-    ax1.axis('equal')
-    ax1.set_title("Detection Distribution by Class")
+    ax.set_title('Detection Class Distribution', pad=20)
     
     # Create confidence histogram
     fig2, ax2 = plt.subplots(figsize=(10, 6))
-    ax2.hist(df['confidence'], bins=10, range=(0, 1), color='skyblue', edgecolor='black')
+    ax2.hist(confidences, bins=20, range=(0, 1), color='skyblue', edgecolor='black')
     ax2.set_xlabel('Confidence Score')
-    ax2.set_ylabel('Number of Detections')
-    ax2.set_title('Distribution of Confidence Scores')
+    ax2.set_ylabel('Count')
+    ax2.set_title('Confidence Score Distribution')
+    ax2.grid(True, alpha=0.3)
     
-    return fig1, fig2, class_counts
+    return fig, fig2, class_counts
 
 def fig_to_base64(fig):
     """
-    Convert matplotlib figure to base64-encoded image
+    Convert a matplotlib figure to a base64 string
     
     Args:
         fig (matplotlib.figure.Figure): Figure to convert
         
     Returns:
-        str: Base64-encoded image
+        str: Base64 encoded string
     """
-    buf = BytesIO()
-    fig.savefig(buf, format='png', dpi=300, bbox_inches='tight')
-    buf.seek(0)
-    img_str = base64.b64encode(buf.read()).decode('utf-8')
-    return img_str 
+    img_buf = BytesIO()
+    fig.savefig(img_buf, format='png')
+    img_buf.seek(0)
+    img_data = base64.b64encode(img_buf.getvalue()).decode('utf-8')
+    return img_data 

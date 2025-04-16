@@ -27,9 +27,12 @@ import asyncio
 import inspect
 import uuid
 import tempfile
+import traceback
 from pathlib import Path
 from io import BytesIO
 from functools import partial
+import torchvision.transforms as transforms
+from homeless_detection.model_adapter import get_model_adapter, draw_predictions
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -73,7 +76,7 @@ except Exception:
 
 # Import utility functions from the homeless_detection package
 try:
-    from homeless_detection.utils import load_model as utils_load_model
+    from homeless_detection.model_adapter import get_model_adapter
     from homeless_detection.utils import draw_predictions as utils_draw_predictions
     from homeless_detection.utils import create_detection_map, create_summary_charts
     if DEBUG:
@@ -96,8 +99,8 @@ if st.session_state:
     logger.info("Current session state keys: %s", list(st.session_state.keys()))
 
 # Constants and configurations
-TEMP_DIR = "temp_images"
-RESULTS_DIR = "results"
+TEMP_DIR = os.path.join(os.path.dirname(__file__), "temp")
+RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 ORIGINAL_DIR = os.path.join(RESULTS_DIR, "original")
 PREDICTED_DIR = os.path.join(RESULTS_DIR, "predicted")
 CSV_PATH = os.path.join(RESULTS_DIR, "predictions.csv")
@@ -348,6 +351,7 @@ if not os.path.exists(models_dir):
 else:
     # Find all .pth files in the models directory
     model_files = [f for f in os.listdir(models_dir) if f.endswith('.pth')]
+    logger.info(f"Found model files: {model_files}")
     
     if not model_files:
         st.error(f"No model files (.pth) found in '{models_dir}' directory. Please add a model file.")
@@ -356,13 +360,44 @@ else:
     else:
         # Always show model selector in sidebar
         st.sidebar.subheader("Model Selection")
-        selected_model = st.sidebar.selectbox(
-            "Select model to use:", 
-            model_files
-        )
-        model_path = os.path.join(models_dir, selected_model)
-        can_run_detection = True
         
+        # Create model adapter to get available models
+        try:
+            logger.info("About to initialize ModelAdapter")
+            model_adapter = get_model_adapter()
+            logger.info(f"ModelAdapter type: {type(model_adapter)}")
+            logger.info(f"ModelAdapter attributes: {dir(model_adapter)}")
+            
+            # Use direct model file selection instead of configuration lookup
+            model_options = {file: file for file in model_files}
+            
+            # Let user select model
+            selected_model = st.sidebar.selectbox(
+                "Select model to use:", 
+                list(model_options.keys())
+            )
+            model_path = os.path.join(models_dir, selected_model)
+            can_run_detection = True
+            
+            # Show model info based on file name
+            if "FAST_R_CNN" in selected_model:
+                st.sidebar.info("FAST_R_CNN Custom Model for Homeless Detection")
+            elif "4classes" in selected_model:
+                st.sidebar.info("Model trained for detecting 4 classes: Homeless People, Encampments, Carts, and Bikes")
+            elif "2classes" in selected_model:
+                st.sidebar.info("Model trained for detecting 2 classes: Homeless People and Encampments")
+        except Exception as e:
+            logger.error(f"Error initializing model adapter: {str(e)}")
+            logger.error(f"Exception type: {type(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Fallback to simple model selection
+            selected_model = st.sidebar.selectbox(
+                "Select model to use:", 
+                model_files
+            )
+            model_path = os.path.join(models_dir, selected_model)
+            can_run_detection = True
 
 # Main content area
 st.title("Homeless Detection from Google Street View")
@@ -498,154 +533,456 @@ with col2:
     - Keep the shape rectangular for accurate grid calculations
     """)
 
-# Function to load model - use the utility function with Streamlit caching
-@st.cache_resource
+# Function to load model with error handling
 def load_model():
     try:
-        if model_path is None:
-            st.error("No valid model path available.")
+        logger.info("================== MODEL LOADING START ==================")
+        logger.info("Attempting to load model")
+        
+        # Initialize model adapter
+        logger.info("Creating ModelAdapter instance")
+        model_adapter = get_model_adapter()
+        logger.info(f"ModelAdapter created: {type(model_adapter)}")
+        
+        # First, look specifically for the preferred model
+        models_dir = os.path.join(os.path.dirname(__file__), "models")
+        logger.info(f"Models directory: {models_dir}")
+        logger.info(f"Directory exists: {os.path.exists(models_dir)}")
+        
+        # List all files in models directory
+        if os.path.exists(models_dir):
+            all_files = os.listdir(models_dir)
+            logger.info(f"All files in models directory: {all_files}")
+            pth_files = [f for f in all_files if f.endswith('.pth')]
+            logger.info(f"PTH files found: {pth_files}")
+        else:
+            logger.error("Models directory does not exist")
             return None, None
-        return utils_load_model(model_path)
+        
+        # Use the first available model
+        if pth_files:
+            model_path = os.path.join(models_dir, pth_files[0])
+            logger.info(f"Using model: {model_path}")
+            
+            # Track file size and permissions
+            if os.path.exists(model_path):
+                file_stats = os.stat(model_path)
+                logger.info(f"Model file size: {file_stats.st_size / (1024*1024):.2f} MB")
+                logger.info(f"Model file permissions: {oct(file_stats.st_mode)}")
+            else:
+                logger.error(f"Selected model file does not exist: {model_path}")
+                return None, None
+        else:
+            logger.error("No .pth model files found")
+            return None, None
+        
+        # Load the model with detailed error logging
+        with st.spinner(f"Loading model, please wait..."):
+            logger.info("Calling model_adapter.load_model()")
+            try:
+                # First try direct loading without using the adapter
+                from homeless_detection.model_adapter import create_custom_fasterrcnn_with_bn
+                logger.info("Creating model directly using create_custom_fasterrcnn_with_bn")
+                
+                # Create model instance
+                model = create_custom_fasterrcnn_with_bn(num_classes=5)
+                logger.info(f"Model created: {type(model)}")
+                
+                # Set device
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                logger.info(f"Using device: {device}")
+                
+                # Load weights
+                logger.info(f"Loading weights from: {model_path}")
+                state_dict = torch.load(model_path, map_location=device)
+                logger.info(f"State dict keys: {list(state_dict.keys())[:5]}...")
+                
+                # Load the state dict
+                logger.info("Loading state dict into model")
+                try:
+                    model.load_state_dict(state_dict, strict=True)
+                    logger.info("State dict loaded with strict=True")
+                except Exception as strict_error:
+                    logger.warning(f"Strict loading failed: {str(strict_error)}")
+                    logger.info("Attempting to load with strict=False")
+                    model.load_state_dict(state_dict, strict=False)
+                    logger.info("State dict loaded with strict=False")
+                
+                # Set model to evaluation mode
+                model.eval()
+                model.to(device)
+                logger.info("Model evaluation mode set")
+                
+                # Create a simple adapter-like wrapper
+                class SimpleAdapter:
+                    def __init__(self, model, device):
+                        self.model = model
+                        self.device = device
+                        self.transform = transforms.Compose([
+                            transforms.Resize([512, 512]),
+                            transforms.ToTensor(),
+                            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                        ])
+                    
+                    def predict(self, image, confidence_threshold=0.3):
+                        # Preprocess image
+                        if isinstance(image, str):
+                            image = Image.open(image).convert("RGB")
+                        
+                        # Transform and add batch dimension
+                        img_tensor = self.transform(image).unsqueeze(0).to(self.device)
+                        
+                        # Run inference
+                        with torch.no_grad():
+                            predictions = self.model(img_tensor)
+                            prediction = predictions[0]
+                            
+                            # Extract predictions
+                            pred_boxes = prediction["boxes"].cpu().numpy()
+                            pred_labels = prediction["labels"].cpu().numpy()
+                            pred_scores = prediction["scores"].cpu().numpy()
+                            
+                            # Filter by confidence
+                            mask = pred_scores >= confidence_threshold
+                            pred_boxes = pred_boxes[mask]
+                            pred_labels = pred_labels[mask]
+                            pred_scores = pred_scores[mask]
+                            
+                            return pred_boxes, pred_labels, pred_scores
+                    
+                    def get_class_map(self):
+                        return {
+                            1: "Homeless_People",
+                            2: "Homeless_Encampments",
+                            3: "Homeless_Cart",
+                            4: "Homeless_Bike"
+                        }
+                
+                # Create adapter wrapper
+                adapter = SimpleAdapter(model, device)
+                logger.info("Created SimpleAdapter wrapper")
+                
+                # Return the adapter and device
+                logger.info("Model loaded successfully")
+                logger.info("================== MODEL LOADING END ==================")
+                return adapter, device
+                
+            except Exception as direct_error:
+                logger.error(f"Direct model loading failed: {str(direct_error)}")
+                logger.error(traceback.format_exc())
+                
+                # Fall back to adapter method
+                try:
+                    logger.info("Falling back to adapter.load_model method")
+                    model, device, config = model_adapter.load_model(model_path)
+                    logger.info(f"Model loaded using adapter: {type(model)}")
+                    logger.info(f"Device: {device}")
+                    
+                    # Set model to evaluation mode
+                    model.eval()
+                    logger.info("Model set to evaluation mode")
+                    
+                    # Return the adapter and device
+                    logger.info("Model loaded successfully via adapter")
+                    logger.info("================== MODEL LOADING END ==================")
+                    return model_adapter, device
+                except Exception as adapter_error:
+                    logger.error(f"Adapter loading also failed: {str(adapter_error)}")
+                    logger.error(traceback.format_exc())
+                    logger.info("================== MODEL LOADING FAILED ==================")
+                    return None, None
+    
     except Exception as e:
-        st.error(f"Error loading model: {str(e)}")
+        logger.error(f"Error in load_model function: {str(e)}")
+        logger.error(traceback.format_exc())
+        logger.info("================== MODEL LOADING FAILED ==================")
         return None, None
 
 # Function to process a single image
-def process_image(image_path, model, device, lat, lon, heading, pano_id, date):
+def process_image(image_path, model_adapter, device, lat, lon, heading, pano_id, date):
     try:
-        if not ensure_file_exists(image_path):
-            logger.error(f"Image file not found after retries: {image_path}")
+        logger.info("================= IMAGE PROCESSING START =================")
+        logger.info(f"Processing image at {lat:.6f}, {lon:.6f}, heading {heading}°")
+        logger.info(f"Image path: {image_path}")
+        logger.info(f"Model adapter type: {type(model_adapter)}")
+        
+        # Check if file exists
+        if not os.path.exists(image_path):
+            logger.error(f"Image file not found: {image_path}")
             return []
         
-        image = Image.open(image_path).convert("RGB")
-        img_tensor = TF.to_tensor(image).unsqueeze(0).to(device)
+        # Check file properties
+        file_stats = os.stat(image_path)
+        file_size_kb = file_stats.st_size / 1024
+        logger.info(f"Image file size: {file_size_kb:.2f} KB")
         
-        with torch.no_grad():
-            prediction = model(img_tensor)[0]
+        if file_size_kb < 1:  # Less than 1KB is probably empty
+            logger.error("Image file appears to be empty or corrupted")
+            return []
         
-        pred_boxes = prediction["boxes"].cpu().numpy()
-        pred_labels = prediction["labels"].cpu().numpy()
-        pred_scores = prediction["scores"].cpu().numpy()
+        # Load and prepare image
+        try:
+            logger.info("Loading image with PIL")
+            image = Image.open(image_path).convert("RGB")
+            logger.info(f"Original image size: {image.size}")
+            logger.info(f"Image mode: {image.mode}")
+            
+            # Save a debug copy of the input image
+            debug_dir = os.path.join(os.path.dirname(__file__), "debug")
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_path = os.path.join(debug_dir, f"input_{pano_id}_{heading}.jpg")
+            image.save(debug_path)
+            logger.info(f"Saved debug input image to {debug_path}")
+            
+            # Resize for model
+            target_size = (512, 512)
+            logger.info(f"Resizing to {target_size}")
+            original_size = image.size
+            image_resized = transforms.Resize(target_size)(image)
+            logger.info(f"Resized image size: {image_resized.size}")
+        except Exception as img_error:
+            logger.error(f"Error loading or resizing image: {str(img_error)}")
+            logger.error(traceback.format_exc())
+            return []
         
-        # Filter by selected categories and their thresholds
+        # Run model prediction
+        try:
+            logger.info("Running model prediction")
+            base_confidence = 0.1  # Lower threshold to catch any potential detections
+            logger.info(f"Using base confidence threshold: {base_confidence}")
+            
+            # Ensure model_adapter has predict method
+            if not hasattr(model_adapter, 'predict'):
+                logger.error(f"Model adapter has no 'predict' method. Available methods: {dir(model_adapter)}")
+                return []
+            
+            # Run prediction
+            logger.info("Calling model_adapter.predict()")
+            pred_boxes, pred_labels, pred_scores = model_adapter.predict(image_resized, confidence_threshold=base_confidence)
+            
+            # Log raw prediction results
+            logger.info(f"Raw prediction boxes shape: {pred_boxes.shape if isinstance(pred_boxes, np.ndarray) else 'empty'}")
+            logger.info(f"Raw prediction labels: {pred_labels}")
+            logger.info(f"Raw prediction scores: {pred_scores}")
+        except Exception as pred_error:
+            logger.error(f"Error during model prediction: {str(pred_error)}")
+            logger.error(traceback.format_exc())
+            return []
+        
+        # Get class map
+        try:
+            logger.info("Getting class map")
+            if hasattr(model_adapter, 'get_class_map'):
+                class_map = model_adapter.get_class_map()
+                logger.info(f"Class map: {class_map}")
+            else:
+                logger.warning("Model adapter has no get_class_map method, using default")
+                class_map = {
+                    1: "Homeless_People",
+                    2: "Homeless_Encampments",
+                    3: "Homeless_Cart",
+                    4: "Homeless_Bike"
+                }
+        except Exception as class_error:
+            logger.error(f"Error getting class map: {str(class_error)}")
+            class_map = {i: f"Class_{i}" for i in range(1, 5)}
+        
+        # Filter predictions by category and threshold
+        logger.info("Filtering predictions by category and threshold")
+        logger.info(f"Selected categories: {st.session_state.selected_categories}")
+        logger.info(f"Category thresholds: {st.session_state.category_thresholds}")
+        
         filtered_indices = []
         for i, (label, score) in enumerate(zip(pred_labels, pred_scores)):
             category_id = int(label)
+            logger.info(f"Checking prediction {i}: category={category_id}, score={score:.3f}")
             # Check if category is selected and meets its threshold
             if (category_id in st.session_state.selected_categories and 
                 st.session_state.selected_categories[category_id] and
                 score >= st.session_state.category_thresholds[category_id]):
+                logger.info(f"  Accepted: category {category_id} with score {score:.3f}")
                 filtered_indices.append(i)
+            else:
+                logger.info(f"  Rejected: category {category_id} with score {score:.3f}")
         
         # Apply filters
         if filtered_indices:
+            logger.info(f"Keeping {len(filtered_indices)} detections after filtering")
             pred_boxes = pred_boxes[filtered_indices]
             pred_labels = pred_labels[filtered_indices]
             pred_scores = pred_scores[filtered_indices]
         else:
-            # No detections that meet criteria
+            logger.info("No detections passed filtering criteria")
             pred_boxes = np.array([])
             pred_labels = np.array([])
             pred_scores = np.array([])
         
+        # Process detections
         detections = []
         if len(pred_boxes) > 0:
-            # Create unique filename based on parameters
+            logger.info(f"Processing {len(pred_boxes)} valid detections")
+            
+            # Create paths for output images
             filename = f"streetview_{pano_id}_{date}_{lat}_{lon}_heading{heading}.jpg"
             original_path = os.path.join(ORIGINAL_DIR, filename)
             predicted_path = os.path.join(PREDICTED_DIR, filename)
+            logger.info(f"Original path: {original_path}")
+            logger.info(f"Predicted path: {predicted_path}")
             
-            # Save original image with retries
-            for _ in range(3):
-                try:
-                    image.save(original_path)
-                    if ensure_file_exists(original_path):
-                        break
-                except Exception as e:
-                    logger.warning(f"Retry saving original image due to: {str(e)}")
-                    time.sleep(0.5)
-            
-            # Save predicted image with retries
+            # Save original image
             try:
+                logger.info("Saving original image")
+                original_image = Image.open(image_path).convert("RGB")
+                original_image.save(original_path)
+                logger.info(f"Original image saved to: {original_path}")
+                logger.info(f"File exists: {os.path.exists(original_path)}")
+            except Exception as save_error:
+                logger.error(f"Error saving original image: {str(save_error)}")
+            
+            # Draw and save prediction image
+            try:
+                logger.info("Drawing prediction boxes")
+                # Convert boxes back to original image size if necessary
+                if original_size != target_size:
+                    logger.info("Scaling boxes to original image size")
+                    scale_x = original_size[0] / target_size[0]
+                    scale_y = original_size[1] / target_size[1]
+                    logger.info(f"Scale factors: x={scale_x}, y={scale_y}")
+                    
+                    scaled_boxes = []
+                    for box in pred_boxes:
+                        x1, y1, x2, y2 = box
+                        scaled_box = [x1 * scale_x, y1 * scale_y, x2 * scale_x, y2 * scale_y]
+                        scaled_boxes.append(scaled_box)
+                    
+                    pred_boxes = np.array(scaled_boxes)
+                
+                # Draw predictions
+                logger.info("Drawing predictions on image")
                 pred_image = draw_predictions_with_colors(
-                    image.copy(), pred_boxes, pred_labels, pred_scores, 0.0
+                    original_image.copy(), pred_boxes, pred_labels, pred_scores, 0.0
                 )
-                for _ in range(3):
-                    try:
-                        pred_image.save(predicted_path)
-                        if ensure_file_exists(predicted_path):
-                            break
-                    except Exception as e:
-                        logger.warning(f"Retry saving predicted image due to: {str(e)}")
-                        time.sleep(0.5)
-            except Exception as e:
-                logger.error(f"Could not save prediction image: {str(e)}")
+                
+                # Save prediction image
+                logger.info(f"Saving prediction image to: {predicted_path}")
+                pred_image.save(predicted_path)
+                logger.info(f"Predicted image saved: {os.path.exists(predicted_path)}")
+                
+                # Also save to debug directory
+                debug_pred_path = os.path.join(debug_dir, f"pred_{pano_id}_{heading}.jpg")
+                pred_image.save(debug_pred_path)
+                logger.info(f"Debug prediction image saved to: {debug_pred_path}")
+            except Exception as draw_error:
+                logger.error(f"Error drawing or saving predicted image: {str(draw_error)}")
+                logger.error(traceback.format_exc())
                 predicted_path = original_path  # Fallback to original image
             
-            # Verify files exist before adding to detections
-            if ensure_file_exists(predicted_path):
-                detections.append({
-                    "filename": filename,
-                    "lat": lat,
-                    "lon": lon,
-                    "heading": heading,
-                    "date": date,
-                    "class": LABEL_MAP.get(int(pred_labels[0]), str(pred_labels[0])),
-                    "confidence": round(float(pred_scores[0]), 3),
-                    "image_path": predicted_path
-                })
+            # Create detection records
+            if os.path.exists(predicted_path):
+                logger.info("Creating detection records")
+                for i, (box, label, score) in enumerate(zip(pred_boxes, pred_labels, pred_scores)):
+                    cls_id = int(label)
+                    cls_name = class_map.get(cls_id, str(cls_id))
+                    logger.info(f"Detection {i}: class={cls_name}, score={score:.3f}")
+                    detections.append({
+                        "filename": filename,
+                        "lat": lat,
+                        "lon": lon,
+                        "heading": heading,
+                        "date": date,
+                        "class": cls_name,
+                        "confidence": round(float(score), 3),
+                        "image_path": predicted_path
+                    })
+            else:
+                logger.error(f"Failed to create predicted image: {predicted_path}")
         
+        logger.info(f"Returning {len(detections)} detections")
+        logger.info("================= IMAGE PROCESSING END =================")
         return detections
+        
     except Exception as e:
         logger.error(f"Error processing image {image_path}: {str(e)}")
+        logger.error(traceback.format_exc())
+        logger.info("================= IMAGE PROCESSING FAILED =================")
         return []
 
 # Run detection process
 def run_detection():
     try:
+        logger.info("================== DETECTION START ==================")
         log_async_state()
-        logger.info("=== Detection Start ===")
         logger.info("Component states: %s", [k for k in st.session_state.keys() if len(k) == 64])  # Hash-like keys
         
         # Check if API key is provided
         if not api_key:
+            logger.error("Missing API key")
             st.error("Please enter your Google Street View API Key")
             return None
         
         # Check if at least one category is selected
+        logger.info(f"Selected categories: {st.session_state.selected_categories}")
         if not any(st.session_state.selected_categories.values()):
+            logger.error("No categories selected")
             st.error("Please select at least one detection category")
             return None
         
         # Add API key validation check
-        test_params = [{
-            'size': '640x640',
-            'location': '34.0522, -118.2437',  # Test with known LA coordinates
-            'heading': '0',
-            'pitch': '0',
-            'key': api_key
-        }]
-        test_result = google_streetview.api.results(test_params)
-        if test_result.metadata[0].get('status') != 'OK':
-            st.error("❌ Invalid API Key")
+        try:
+            logger.info("Validating API key with test request")
+            test_params = [{
+                'size': '640x640',
+                'location': '34.0522, -118.2437',  # Test with known LA coordinates
+                'heading': '0',
+                'pitch': '0',
+                'key': api_key
+            }]
+            test_result = google_streetview.api.results(test_params)
+            
+            logger.info(f"API test status: {test_result.metadata[0].get('status')}")
+            if test_result.metadata[0].get('status') != 'OK':
+                logger.error(f"Invalid API key: {test_result.metadata[0]}")
+                st.error("❌ Invalid API Key")
+                return None
+                
+            logger.info("API key validation successful")
+            st.success("✅ API Key Valid")
+        except Exception as api_error:
+            logger.error(f"API key validation error: {str(api_error)}")
+            st.error(f"Error validating API key: {str(api_error)}")
             return None
-        st.success("✅ API Key Valid")
         
         # Generate grid points
+        logger.info(f"Generating grid: {num_rows}x{num_cols}")
+        logger.info(f"Area bounds: ({top_left_lat}, {top_left_lon}) to ({bottom_right_lat}, {bottom_right_lon})")
+        
         latitudes = [top_left_lat + i * (bottom_right_lat - top_left_lat) / (num_rows - 1) for i in range(num_rows)]
         longitudes = [top_left_lon + j * (bottom_right_lon - top_left_lon) / (num_cols - 1) for j in range(num_cols)]
         grid_points = [(lat, lon) for lat in latitudes for lon in longitudes]
         
+        logger.info(f"Generated {len(grid_points)} grid points")
+        
         # Load model
+        logger.info("Loading model")
         with st.spinner("Loading model..."):
-            model, device = load_model()
+            model_adapter, device = load_model()
             
         # Exit if model loading failed
-        if model is None or device is None:
+        if model_adapter is None or device is None:
+            logger.error("Model loading failed")
             st.error("Model loading failed. Cannot continue with detection.")
             return None
+            
+        logger.info(f"Model loaded successfully: {type(model_adapter)}")
+        
+        # Ensure output directories exist
+        logger.info("Checking output directories")
+        for directory in [TEMP_DIR, RESULTS_DIR, ORIGINAL_DIR, PREDICTED_DIR]:
+            logger.info(f"Ensuring directory exists: {directory}")
+            os.makedirs(directory, exist_ok=True)
         
         # Initialize progress indicators
+        logger.info("Initializing progress indicators")
         progress_bar = st.progress(0)
         status_text = st.empty()
         results_placeholder = st.empty()
@@ -654,18 +991,25 @@ def run_detection():
         all_detections = []
         processed_images = 0
         total_images = len(grid_points) * 2  # 2 headings per point
+        logger.info(f"Total images to process: {total_images}")
         
         # Clear previous results
         if os.path.exists(CSV_PATH):
+            logger.info(f"Removing previous CSV file: {CSV_PATH}")
             os.remove(CSV_PATH)
         
         # Create CSV headers
+        logger.info("Creating new CSV file with headers")
         csv_fields = ["filename", "lat", "lon", "heading", "date", "class", "confidence"]
         pd.DataFrame(columns=csv_fields).to_csv(CSV_PATH, index=False)
         
         # Process each grid point
+        logger.info("Beginning image processing loop")
         for idx, (lat, lon) in enumerate(grid_points):
+            logger.info(f"Processing point {idx+1}/{len(grid_points)}: ({lat:.6f}, {lon:.6f})")
+            
             for heading in [0, 180]:
+                logger.info(f"Processing heading: {heading}°")
                 status_text.text(f"Processing location {idx+1}/{len(grid_points)}, heading {heading}°...")
                 
                 params = [{
@@ -677,85 +1021,139 @@ def run_detection():
                 }]
                 
                 try:
+                    logger.info("Fetching Street View image")
                     results = google_streetview.api.results(params)
                     
                     if results.metadata[0]['status'] == 'OK':
+                        logger.info("Street View image available")
                         metadata = results.metadata[0]
                         pano_id = metadata.get('pano_id', 'unknown')
                         date = metadata.get('date', datetime.now().strftime('%Y-%m'))
+                        logger.info(f"Image metadata - pano_id: {pano_id}, date: {date}")
                         
                         # Download image
+                        logger.info("Downloading image")
                         response = requests.get(results.links[0])
                         temp_image_path = os.path.join(TEMP_DIR, f"temp_{pano_id}.jpg")
+                        
                         with open(temp_image_path, 'wb') as f:
                             f.write(response.content)
+                            
+                        # Verify image download
+                        if os.path.exists(temp_image_path):
+                            file_size = os.path.getsize(temp_image_path)
+                            logger.info(f"Image downloaded: {temp_image_path} ({file_size} bytes)")
+                            
+                            if file_size == 0:
+                                logger.error("Downloaded image is empty")
+                                status_text.text(f"❌ Empty image at {lat:.6f}, {lon:.6f}")
+                                continue
+                        else:
+                            logger.error("Image download failed")
+                            status_text.text(f"❌ Download failed for {lat:.6f}, {lon:.6f}")
+                            continue
                         
                         # Process image
+                        logger.info(f"Processing downloaded image: {temp_image_path}")
                         try:
-                            detections = process_image(temp_image_path, model, device, lat, lon, heading, pano_id, date)
+                            detections = process_image(temp_image_path, model_adapter, device, lat, lon, heading, pano_id, date)
+                            
+                            # Log detection results
+                            logger.info(f"Received {len(detections)} detections from process_image")
+                            if detections:
+                                for i, det in enumerate(detections):
+                                    logger.info(f"Detection {i+1}: {det['class']} with confidence {det['confidence']}")
+                            
                             all_detections.extend(detections)
                             
                             # Update CSV if detections found
                             if detections:
+                                logger.info("Writing detections to CSV")
                                 detection_df = pd.DataFrame(detections)
                                 detection_df[csv_fields].to_csv(CSV_PATH, mode='a', header=False, index=False)
                                 
                                 status_text.text(f"✅ Detected {len(detections)} object(s) at {lat:.6f}, {lon:.6f}, heading {heading}°")
+                                
+                                # Display preview of the latest detection
+                                if len(detections) > 0 and 'image_path' in detections[0] and os.path.exists(detections[0]['image_path']):
+                                    logger.info(f"Displaying preview image: {detections[0]['image_path']}")
+                                    results_placeholder.image(
+                                        detections[0]['image_path'], 
+                                        caption=f"Latest detection: {detections[0]['class']} ({detections[0]['confidence']:.2f})",
+                                        width=300
+                                    )
                             else:
+                                logger.info("No detections found at this location")
                                 status_text.text(f"❌ No detections at {lat:.6f}, {lon:.6f}, heading {heading}°")
-                        except Exception as e:
-                            st.error(f"Error processing image: {str(e)}")
-                            if DEBUG:
-                                st.write(f"Detailed error: {str(e)}")
+                        except Exception as proc_error:
+                            logger.error(f"Error processing image: {str(proc_error)}")
+                            logger.error(traceback.format_exc())
+                            st.error(f"Error processing image: {str(proc_error)}")
                         finally:
                             # Clean up temp file
                             if os.path.exists(temp_image_path):
                                 try:
+                                    logger.info(f"Removing temporary file: {temp_image_path}")
                                     os.remove(temp_image_path)
-                                except Exception as e:
-                                    if DEBUG:
-                                        st.write(f"Error removing temp file: {str(e)}")
+                                except Exception as rm_error:
+                                    logger.warning(f"Error removing temp file: {str(rm_error)}")
                     else:
+                        logger.info(f"No Street View image available: {results.metadata[0]['status']}")
                         status_text.text(f"No image available for {lat:.6f}, {lon:.6f}, heading {heading}°")
                     
                     # Update progress
                     processed_images += 1
-                    progress_bar.progress(processed_images / total_images)
+                    progress_percent = processed_images / total_images
+                    logger.info(f"Progress: {processed_images}/{total_images} ({progress_percent:.1%})")
+                    progress_bar.progress(progress_percent)
                     
                     # Add a small delay to avoid API rate limits
                     time.sleep(0.5)
                     
                 except Exception as e:
+                    logger.error(f"Error in grid point processing: {str(e)}")
+                    logger.error(traceback.format_exc())
                     st.error(f"Error processing location {lat}, {lon}: {str(e)}")
                     processed_images += 1
                     progress_bar.progress(processed_images / total_images)
         
-        # Clean up temp directory
+        # Clean up temp directory but make sure to preserve the directory itself
         try:
-            shutil.rmtree(TEMP_DIR)
-            os.makedirs(TEMP_DIR, exist_ok=True)
+            logger.info("Final cleanup of temp directory")
+            for file in os.listdir(TEMP_DIR):
+                file_path = os.path.join(TEMP_DIR, file)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            logger.info("Temp directory cleaned")
         except Exception as e:
-            if DEBUG:
-                st.write(f"Error cleaning up temp directory: {str(e)}")
+            logger.warning(f"Error cleaning up temp directory: {str(e)}")
         
         # Complete progress
         progress_bar.progress(1.0)
         status_text.text("Processing completed.")
         
         # Log detection results
-        logger.info("Detection completed with %d total detections", len(all_detections))
-        logger.info("Session state before returning: %s", list(st.session_state.keys()))
+        logger.info(f"Detection completed with {len(all_detections)} total detections")
+        logger.info(f"Session state keys: {list(st.session_state.keys())}")
         
-        # After detection completes
-        logger.info("=== Detection Complete ===")
-        logger.info("Results added to session state: %s", 'detection_results' in st.session_state)
-        logger.info("Component states after detection: %s", [k for k in st.session_state.keys() if len(k) == 64])
+        # Store detections in a debug file
+        if all_detections:
+            try:
+                debug_file = os.path.join(os.path.dirname(__file__), "debug", "detections.json")
+                with open(debug_file, 'w') as f:
+                    json.dump(all_detections, f, indent=2, default=str)
+                logger.info(f"Saved debug detections to {debug_file}")
+            except Exception as json_error:
+                logger.error(f"Error saving debug detections: {str(json_error)}")
+        
+        logger.info("================== DETECTION COMPLETE ==================")
         return all_detections
     
     except Exception as e:
+        logger.error(f"Fatal error in run_detection: {str(e)}")
+        logger.error(traceback.format_exc())
         st.error(f"An error occurred during detection: {str(e)}")
-        if DEBUG:
-            st.write(f"Detailed error: {str(e)}")
+        logger.info("================== DETECTION FAILED ==================")
         return None
 
 # Add resource tracking helper function
