@@ -1018,7 +1018,8 @@ def run_detection():
                     'location': f'{lat},{lon}',
                     'heading': str(heading),
                     'pitch': '0',
-                    'key': api_key
+                    'key': api_key,
+                    'source': 'outdoor'  # Add this parameter to only get official Street View car images
                 }]
                 
                 try:
@@ -1081,7 +1082,7 @@ def run_detection():
                                     results_placeholder.image(
                                         detections[0]['image_path'], 
                                         caption=f"Latest detection: {detections[0]['class']} ({detections[0]['confidence']:.2f})",
-                                        use_container_width=True
+                                        width=-1
                                     )
                             else:
                                 logger.info("No detections found at this location")
@@ -1412,7 +1413,8 @@ if st.session_state.get('results_displayed', False) and 'cached_map' in st.sessi
                             # Display the main image with caption
                             st.image(main_img, 
                                     caption=f"All Detections: {', '.join(det_summary)}\n{location_info}",
-                                    use_container_width=True)
+                                    width=-1
+                                )
                             
                             # Add expandable section for individual detections
                             with st.expander("View Individual Detections"):
@@ -1431,7 +1433,8 @@ if st.session_state.get('results_displayed', False) and 'cached_map' in st.sessi
                                     
                                     st.image(single_det_img, 
                                             caption=f"{det['class']} - Confidence: {det['confidence']:.2f}\n{location_info}",
-                                            use_container_width=True)
+                                            width=-1
+                                        )
                                     
                                     # Add a separator between detections
                                     if i < len(data['detections']) - 1:
