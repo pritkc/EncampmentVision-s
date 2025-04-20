@@ -1,0 +1,6 @@
+[theme]
+primaryColor="#FF8C00" # Dark Orange
+backgroundColor="#FFFFFF" # White
+secondaryBackgroundColor="#F8F8F8" # Light Gray for contrast
+textColor="#262730" # Dark Gray for better readability
+font="sans serif" 

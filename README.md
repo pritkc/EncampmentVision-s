@@ -100,8 +100,17 @@ The system processes images from a grid of locations within a specified area, ru
 
 ## Requirements
 
-- Python 3.8+
-- Google Street View API key (see [API Setup](#api-setup) below)
+This project requires Python 3.10 or higher and Streamlit 1.31.0 or higher. If you encounter any UI-related errors, please ensure you have the correct Streamlit version installed:
+
+```bash
+pip install --upgrade streamlit>=1.31.0
+```
+
+Or install all requirements:
+
+```bash
+pip install -r requirements.txt --upgrade
+```
 
 ## Installation
 
