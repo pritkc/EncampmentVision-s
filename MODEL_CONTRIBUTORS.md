@@ -1,6 +1,6 @@
 # Guide for Model Contributors
 
-This document provides guidelines for contributing new detection models to the Homeless Detection System.
+This document provides guidelines for contributing new detection models to the VisionAid.
 
 ## Model Requirements
 
@@ -13,10 +13,10 @@ The detection system is designed to work with PyTorch-based object detection mod
 When contributing a new model, please ensure:
 
 1. Your model uses the same class labels:
-   - Class 1: Homeless People
-   - Class 2: Homeless Encampments
-   - Class 3: Homeless Carts
-   - Class 4: Homeless Bikes
+   - Class 1:  People
+   - Class 2:  Encampments
+   - Class 3:  Carts
+   - Class 4:  Bikes
 
 2. Your model produces predictions in the standard PyTorch detection format:
    ```python

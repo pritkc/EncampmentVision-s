@@ -89,7 +89,7 @@ except Exception as e:
 
 # Set page config
 st.set_page_config(
-    page_title="Homeless Detection System",
+    page_title="VisionAid",
     page_icon="🏘️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -161,26 +161,26 @@ def ensure_file_exists(file_path, max_retries=3, retry_delay=0.5):
 
 # Class mapping
 LABEL_MAP = {
-    1: "Homeless_People",
-    2: "Homeless_Encampments",
-    3: "Homeless_Cart",
-    4: "Homeless_Bike"
+    1: "People",
+    2: "Encampments",
+    3: "Cart",
+    4: "Bike"
 }
 
 # Category display names (more user-friendly)
 CATEGORY_DISPLAY = {
-    1: "Homeless People",
-    2: "Homeless Encampments",
-    3: "Homeless Carts",
-    4: "Homeless Bikes"
+    1: "People",
+    2: "Encampments",
+    3: "Carts",
+    4: "Bikes"
 }
 
 # Add color mapping for categories
 CATEGORY_COLORS = {
-    1: (255, 0, 0),    # Red for Homeless People
-    2: (0, 255, 0),    # Green for Homeless Encampments
-    3: (0, 0, 255),    # Blue for Homeless Carts
-    4: (255, 165, 0)   # Orange for Homeless Bikes
+    1: (255, 0, 0),    # Red for People
+    2: (0, 255, 0),    # Green for Encampments
+    3: (0, 0, 255),    # Blue for Carts
+    4: (255, 165, 0)   # Orange for Bikes
 }
 
 # Add short names for more compact labels
@@ -248,8 +248,8 @@ def draw_predictions_with_colors(image, boxes, labels, scores, threshold=0.5):
     return image
 
 # Sidebar for input parameters
-st.sidebar.title("Homeless Detection System")
-st.sidebar.info("This application detects homeless-related objects in Google Street View images")
+st.sidebar.title("VisionAid")
+st.sidebar.info("This application detects encampment-related objects in Google Street View images")
 
 # API Key input (with secure handling)
 api_key = st.sidebar.text_input("Google Street View API Key", type="password")
@@ -384,9 +384,9 @@ else:
             if "FAST_R_CNN" in selected_model:
                 st.sidebar.info("FAST_R_CNN Custom Model for Homeless Detection")
             elif "4classes" in selected_model:
-                st.sidebar.info("Model trained for detecting 4 classes: Homeless People, Encampments, Carts, and Bikes")
+                st.sidebar.info("Model trained for detecting 4 classes: People, Encampments, Carts, and Bikes")
             elif "2classes" in selected_model:
-                st.sidebar.info("Model trained for detecting 2 classes: Homeless People and Encampments")
+                st.sidebar.info("Model trained for detecting 2 classes: People and Encampments")
         except Exception as e:
             logger.error(f"Error initializing model adapter: {str(e)}")
             logger.error(f"Exception type: {type(e)}")
@@ -401,7 +401,7 @@ else:
             can_run_detection = True
 
 # Main content area
-st.title("Homeless Detection from Google Street View")
+st.title("Encampment Detection from Google Street View")
 st.markdown("""
 This application uses a trained Faster R-CNN model to detect homeless-related objects in Google Street View images.
 """)
@@ -1471,7 +1471,7 @@ elif not can_run_detection:
 
 # Footer
 st.markdown("---")
-st.markdown("Homeless Detection System - Powered by Streamlit and PyTorch")
+st.markdown("VisionAid - Powered by PyTorch")
 
 # After results display
 logger.info("=== Final State Check ===")

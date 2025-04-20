@@ -1,4 +1,4 @@
-# Homeless Detection System
+# VisionAid
 
 This application uses a trained Faster R-CNN model to detect homeless-related objects in Google Street View images.
 
