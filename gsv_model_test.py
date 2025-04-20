@@ -174,11 +174,13 @@ def main():
                         pred_image.save(predicted_path)
                         
                         with open(csv_path, mode='a', newline='', encoding='utf-8') as f:
-                            writer = csv.DictWriter(f, fieldnames=csv_fields)
-                            for box, label, score in zip(pred_boxes, pred_labels, pred_scores):
+                            writer = csv.DictWriter(f, fieldnames=csv_fields + ['boxes', 'labels'])
+                            for i, (box, label, score) in enumerate(zip(pred_boxes, pred_labels, pred_scores)):
                                 if score < 0.5:
                                     continue
                                 cls_name = label_map.get(int(label), str(label))
+                                # Convert box coordinates to integers for cleaner display
+                                box_coords = [int(coord) for coord in box]
                                 writer.writerow({
                                     "filename": filename,
                                     "lat": lat,
@@ -186,7 +188,9 @@ def main():
                                     "heading": heading,
                                     "date": date,
                                     "class": cls_name,
-                                    "confidence": round(float(score), 3)
+                                    "confidence": round(float(score), 3),
+                                    "boxes": box_coords,  # Store as integer coordinates
+                                    "labels": int(label)  # Store the numeric label
                                 })
                     else:
                         print(f"❌ No homeless-related objects detected in {filename}.")

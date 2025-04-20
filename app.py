@@ -33,6 +33,7 @@ from io import BytesIO
 from functools import partial
 import torchvision.transforms as transforms
 from homeless_detection.model_adapter import get_model_adapter, draw_predictions
+from homeless_detection.utils import process_detections_for_display, prepare_grid_images
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1080,7 +1081,7 @@ def run_detection():
                                     results_placeholder.image(
                                         detections[0]['image_path'], 
                                         caption=f"Latest detection: {detections[0]['class']} ({detections[0]['confidence']:.2f})",
-                                        width=300
+                                        use_container_width=True
                                     )
                             else:
                                 logger.info("No detections found at this location")
@@ -1275,27 +1276,9 @@ def generate_cached_map_html(detections, center_lat, center_lon):
         map_data.seek(0)
         html_string = map_data.read().decode()
         
-        # Also save individual detection images to base64 for display
-        detection_images = []
-        for i, d in enumerate(detections):
-            if 'image_path' in d and os.path.exists(d['image_path']):
-                try:
-                    with open(d['image_path'], "rb") as img_file:
-                        img_data = base64.b64encode(img_file.read()).decode()
-                        detection_images.append({
-                            "data": img_data,
-                            "lat": d['lat'],
-                            "lon": d['lon'],
-                            "class": d['class'],
-                            "confidence": d['confidence']
-                        })
-                except Exception as e:
-                    logger.error(f"Error encoding image {d['image_path']}: {e}")
-        
         return {
             "html": html_string,
-            "detection_count": len(detections),
-            "detection_images": detection_images
+            "detection_count": len(detections)
         }
     except Exception as e:
         logger.error(f"Error generating cached map: {e}")
@@ -1303,30 +1286,13 @@ def generate_cached_map_html(detections, center_lat, center_lon):
 
 # Function to display cached map
 def display_cached_map(cached_map):
-    """Display the cached map and detection images"""
+    """Display the cached map"""
     if not cached_map:
         st.warning("No map data available")
         return
     
     # Display the map using HTML
     st.components.v1.html(cached_map["html"], height=600, scrolling=False)
-    
-    # Also display detection images as a fallback
-    if cached_map["detection_images"]:
-        st.subheader(f"Detection Images ({len(cached_map['detection_images'])} found)")
-        
-        # Create a 3-column grid for images
-        cols = st.columns(3)
-        
-        # Display each detection image
-        for i, img in enumerate(cached_map["detection_images"]):
-            col_idx = i % 3
-            with cols[col_idx]:
-                st.image(
-                    f"data:image/jpeg;base64,{img['data']}", 
-                    caption=f"{img['class']} ({img['confidence']:.2f}) at {img['lat']:.6f}, {img['lon']:.6f}",
-                    use_container_width=True
-                )
 
 # Modify the run button section to use our cached approach
 if st.button("Run Detection", type="primary", disabled=not can_run_detection or not any(st.session_state.selected_categories.values())):
@@ -1358,7 +1324,7 @@ if st.session_state.get('results_displayed', False) and 'cached_map' in st.sessi
     st.success(f"Detection completed. Found {len(st.session_state.detection_results)} objects.")
     
     # Create tabs for results
-    tab1, tab2, tab3 = st.tabs(["Map", "Statistics", "Raw Data"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Map", "Statistics", "Detection Images", "Raw Data"])
     
     with tab1:
         st.subheader("Detection Map")
@@ -1389,6 +1355,101 @@ if st.session_state.get('results_displayed', False) and 'cached_map' in st.sessi
             st.warning("No detections found for statistics display")
     
     with tab3:
+        st.subheader("Detection Images")
+        if st.session_state.detection_results:
+            # Group detections by image to avoid duplicates
+            image_detections = {}
+            for det in st.session_state.detection_results:
+                if det['image_path'] not in image_detections:
+                    image_detections[det['image_path']] = {
+                        'detections': [],
+                        'lat': det['lat'],
+                        'lon': det['lon'],
+                        'heading': det['heading'],
+                        'boxes': [],  # Add boxes list
+                        'labels': [],  # Add labels list
+                        'scores': []   # Add scores list
+                    }
+                image_detections[det['image_path']]['detections'].append({
+                    'class': det['class'],
+                    'confidence': det['confidence']
+                })
+                # Store bounding box information if available
+                if 'boxes' in det:
+                    image_detections[det['image_path']]['boxes'].append(det['boxes'])
+                    image_detections[det['image_path']]['labels'].append(det['class'])
+                    image_detections[det['image_path']]['scores'].append(det['confidence'])
+            
+            # Create a 3-column grid for images
+            cols = st.columns(3)
+            col_idx = 0
+            
+            for img_path, data in image_detections.items():
+                if os.path.exists(img_path):
+                    with cols[col_idx]:
+                        try:
+                            # Load the original image
+                            img = Image.open(img_path).convert("RGB")
+                            
+                            # Create detection summary
+                            det_summary = []
+                            for det in data['detections']:
+                                det_summary.append(f"{det['class']} ({det['confidence']:.2f})")
+                            
+                            # Location info
+                            location_info = f"Location: {data['lat']:.6f}, {data['lon']:.6f}\nHeading: {data['heading']}°"
+                            
+                            # Display main image with all detections
+                            main_img = img.copy()
+                            if data['boxes'] and len(data['boxes']) > 0:
+                                main_img = draw_predictions_with_colors(
+                                    main_img,
+                                    np.array(data['boxes']),
+                                    [LABEL_MAP.get(label, label) for label in data['labels']],
+                                    np.array(data['scores'])
+                                )
+                            
+                            # Display the main image with caption
+                            st.image(main_img, 
+                                    caption=f"All Detections: {', '.join(det_summary)}\n{location_info}",
+                                    use_container_width=True)
+                            
+                            # Add expandable section for individual detections
+                            with st.expander("View Individual Detections"):
+                                # Show each detection separately with its own bounding box
+                                for i, (det, box) in enumerate(zip(data['detections'], data['boxes'])):
+                                    st.markdown(f"**{det['class']} ({det['confidence']:.2f})**")
+                                    
+                                    # Create image with single detection
+                                    single_det_img = img.copy()
+                                    single_det_img = draw_predictions_with_colors(
+                                        single_det_img,
+                                        np.array([box]),
+                                        np.array([det['class']]),
+                                        np.array([det['confidence']])
+                                    )
+                                    
+                                    st.image(single_det_img, 
+                                            caption=f"{det['class']} - Confidence: {det['confidence']:.2f}\n{location_info}",
+                                            use_container_width=True)
+                                    
+                                    # Add a separator between detections
+                                    if i < len(data['detections']) - 1:
+                                        st.markdown("---")
+                        
+                        except Exception as e:
+                            st.error(f"Error displaying image {img_path}: {str(e)}")
+                    
+                    # Update column index
+                    col_idx = (col_idx + 1) % 3
+                    
+                    # Create new row of columns if needed
+                    if col_idx == 0:
+                        cols = st.columns(3)
+        else:
+            st.warning("No detection images available")
+    
+    with tab4:
         st.subheader("Raw Detection Data")
         st.dataframe(pd.DataFrame(st.session_state.detection_results))
         

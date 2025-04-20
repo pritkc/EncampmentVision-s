@@ -5,11 +5,27 @@ import folium
 from streamlit_folium import st_folium
 import matplotlib.pyplot as plt
 import base64
-from PIL import Image
+from PIL import Image, ImageDraw
 import glob
 import re
+import pkg_resources
 # Import utility functions
 from homeless_detection.utils import create_detection_map, create_summary_charts
+
+def get_version():
+    try:
+        return pkg_resources.get_distribution('homeless-detection-system').version
+    except pkg_resources.DistributionNotFound:
+        # Fallback: read directly from setup.py if package is not installed
+        try:
+            with open('setup.py', 'r') as f:
+                content = f.read()
+                version_match = re.search(r'version="([^"]+)"', content)
+                if version_match:
+                    return version_match.group(1)
+        except Exception:
+            pass
+        return "dev"
 
 # Set page config
 st.set_page_config(
@@ -26,7 +42,15 @@ def load_results(results_dir):
         return None
     
     try:
+        # Load the CSV with all columns
         df = pd.read_csv(csv_path)
+        
+        # Convert string representations of boxes and labels to lists if they exist
+        if 'boxes' in df.columns:
+            df['boxes'] = df['boxes'].apply(eval)  # Convert string representation to list
+        if 'labels' in df.columns:
+            df['labels'] = df['labels'].apply(eval)  # Convert string representation to list
+        
         return df
     except Exception as e:
         st.error(f"Error loading results: {str(e)}")
@@ -67,7 +91,9 @@ def prepare_map_data(df, predicted_dir):
             "date": row.get('date', ''),
             "class": row['class'],
             "confidence": row['confidence'],
-            "image_path": image_path
+            "image_path": image_path,
+            "boxes": row.get('boxes', []),  # Include bounding boxes
+            "labels": row.get('labels', [])  # Include labels
         })
     
     return detections if detections else None
@@ -87,55 +113,6 @@ def display_results_map(df, predicted_dir):
     
     # Use the utility function to create the map
     return create_detection_map(detections, center_lat, center_lon)
-
-# Function to display image grid
-def display_image_grid(df, predicted_dir, class_filter=None, min_confidence=0.5):
-    if df is None or df.empty:
-        return
-    
-    # Filter by class and confidence
-    filtered_df = df.copy()
-    if class_filter:
-        filtered_df = filtered_df[filtered_df['class'] == class_filter]
-    
-    filtered_df = filtered_df[filtered_df['confidence'] >= min_confidence]
-    
-    if filtered_df.empty:
-        st.warning("No images match the selected filters")
-        return
-    
-    # Get unique filenames
-    unique_files = filtered_df['filename'].unique()
-    
-    # Display image grid
-    cols = 3
-    rows = (len(unique_files) + cols - 1) // cols
-    
-    for i in range(rows):
-        columns = st.columns(cols)
-        for j in range(cols):
-            idx = i * cols + j
-            if idx < len(unique_files):
-                filename = unique_files[idx]
-                image_path = os.path.join(predicted_dir, filename)
-                
-                if os.path.exists(image_path):
-                    # Get detections for this image
-                    image_df = filtered_df[filtered_df['filename'] == filename]
-                    class_summary = image_df['class'].value_counts().to_dict()
-                    summary_text = ", ".join([f"{cls}: {count}" for cls, count in class_summary.items()])
-                    
-                    # Extract coordinates from filename
-                    match = re.search(r'(-?\d+\.\d+)_(-?\d+\.\d+)_heading(\d+)', filename)
-                    if match:
-                        lat, lon, heading = match.groups()
-                        location_text = f"Location: {lat}, {lon}, Heading: {heading}°"
-                    else:
-                        location_text = "Location: Unknown"
-                    
-                    # Display in column
-                    with columns[j]:
-                        st.image(image_path, caption=f"{summary_text}\n{location_text}")
 
 # Sidebar
 st.sidebar.title("Results Viewer")
@@ -177,7 +154,7 @@ else:
         filtered_df = filtered_df[filtered_df['confidence'] >= min_confidence]
         
         # Display on tabs
-        tab1, tab2, tab3 = st.tabs(["Map", "Statistics", "Image Gallery"])
+        tab1, tab2 = st.tabs(["Map", "Statistics"])
         
         with tab1:
             st.subheader("Detection Map")
@@ -196,7 +173,7 @@ else:
                     
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.pyplot(fig)
+                        st.pyplot(fig, clear_figure=False)
                     
                     with col2:
                         st.subheader("Detection Counts")
@@ -204,7 +181,7 @@ else:
                             st.metric(cls, count)
                     
                     st.subheader("Confidence Score Distribution")
-                    st.pyplot(fig2)
+                    st.pyplot(fig2, clear_figure=False)
                     
                     # Additional statistics
                     st.subheader("Additional Statistics")
@@ -218,14 +195,10 @@ else:
                         st.metric("Median Confidence", f"{filtered_df['confidence'].median():.2f}")
             else:
                 st.warning("No data available for the selected filters")
-        
-        with tab3:
-            st.subheader("Image Gallery")
-            display_image_grid(filtered_df, predicted_dir, class_filter, min_confidence)
     else:
         st.error("No predictions found in the specified directory")
         st.info("Please make sure the directory contains a 'predictions.csv' file")
 
 # Footer
 st.markdown("---")
-st.markdown("Homeless Detection Results Viewer - Powered by Streamlit") 
+st.markdown(f"Homeless Detection Results Viewer v{get_version()} - Powered by Streamlit") 
