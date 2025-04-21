@@ -1,9 +1,9 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="homeless-detection-system",
+    name="encampment-detection-system",
     version="0.1.0",
-    description="A Streamlit-based web application for detecting homeless-related objects in Google Street View images",
+    description="A Streamlit-based web application for detecting encampment-related objects in Google Street View images",
     author="BDA600 Project Team",
     packages=find_packages(),
     install_requires=[

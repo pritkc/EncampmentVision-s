@@ -56,10 +56,10 @@ Add your model to the `models_config.json` file with the following information:
       "type": "fasterrcnn_resnet50_fpn_v2",  # Model architecture type
       "num_classes": 5,  # Including background class
       "class_map": {
-        "1": "Homeless_People",
-        "2": "Homeless_Encampments",
-        "3": "Homeless_Cart",
-        "4": "Homeless_Bike"
+        "1": "People",
+        "2": "Encampments",
+        "3": "Cart",
+        "4": "Bike"
       },
       "input_size": [640, 640],  # Expected input dimensions
       "preprocessing": "normalize",  # "default" or "normalize"

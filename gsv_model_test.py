@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Google Street View Homeless Detection
+Google Street View Encampment Detection
 
 This script loads a trained Faster R-CNN model from the models directory to perform
-homeless detection on Google Street View images for a given area.
+encampment detection on Google Street View images for a given area.
 """
 
 import os
@@ -47,10 +47,10 @@ os.makedirs(predicted_dir, exist_ok=True)
 
 # Class mapping
 label_map = {
-    1: "Homeless_People",
-    2: "Homeless_Encampments",
-    3: "Homeless_Cart",
-    4: "Homeless_Bike"
+    1: "People",
+    2: "Encampments",
+    3: "Cart",
+    4: "Bike"
 }
 
 def load_model():
@@ -168,7 +168,7 @@ def main():
                     pred_scores = prediction["scores"].cpu().numpy()
                     
                     if len(pred_boxes) > 0:
-                        print(f"✅ Homeless entities detected in {filename}!")
+                        print(f"✅ Encampment entities detected in {filename}!")
                         image.save(original_path)
                         pred_image = draw_predictions(image.copy(), pred_boxes, pred_labels, pred_scores)
                         pred_image.save(predicted_path)
@@ -193,7 +193,7 @@ def main():
                                     "labels": int(label)  # Store the numeric label
                                 })
                     else:
-                        print(f"❌ No homeless-related objects detected in {filename}.")
+                        print(f"❌ No encampment-related objects detected in {filename}.")
                 
                 else:
                     print(f"No image available for {lat}, {lon}, heading {heading}")

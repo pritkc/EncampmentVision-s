@@ -16,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class ModelAdapter:
-    """Adapter for the homeless detection model"""
+    """Adapter for the encampment detection model"""
     
     def __init__(self):
         self.model = None
@@ -38,10 +38,10 @@ class ModelAdapter:
         
         # Fixed class mapping matching the notebook
         self.class_map = {
-            1: "Homeless_People",
-            2: "Homeless_Encampments",
-            3: "Homeless_Cart",
-            4: "Homeless_Bike"
+            1: "People",
+            2: "Encampments",
+            3: "Cart",
+            4: "Bike"
         }
         
         # Color mapping for visualization
@@ -170,6 +170,61 @@ class ModelAdapter:
 def get_model_adapter():
     """Get model adapter instance"""
     return ModelAdapter()
+
+def create_custom_fasterrcnn_with_bn(num_classes=5, pretrained_backbone=True):
+    """
+    Create a custom FasterRCNN model with batch normalization.
+    This is used by the model loading mechanism.
+    
+    Args:
+        num_classes: Number of classes (including background)
+        pretrained_backbone: Whether to use pretrained backbone
+        
+    Returns:
+        The FasterRCNN model
+    """
+    import torchvision
+    from torchvision.models.detection.faster_rcnn import FasterRCNN
+    from torchvision.models.detection.rpn import AnchorGenerator
+    
+    # Use ResNet-50 with FPN as the backbone
+    backbone = torchvision.models.resnet50(pretrained=pretrained_backbone)
+    
+    # FasterRCNN needs to know the number of output channels in the backbone
+    backbone_out_channels = backbone.fc.in_features
+    
+    # Create the anchor generator
+    anchor_generator = AnchorGenerator(
+        sizes=((32, 64, 128, 256, 512),),
+        aspect_ratios=((0.5, 1.0, 2.0),)
+    )
+    
+    # Create RoI pooler
+    roi_pooler = torchvision.ops.MultiScaleRoIAlign(
+        featmap_names=['0'],
+        output_size=7,
+        sampling_ratio=2
+    )
+    
+    # Create the FasterRCNN model
+    model = FasterRCNN(
+        backbone,
+        num_classes=num_classes,
+        rpn_anchor_generator=anchor_generator,
+        box_roi_pool=roi_pooler,
+        min_size=800,
+        max_size=1333,
+        rpn_pre_nms_top_n_train=2000,
+        rpn_pre_nms_top_n_test=1000,
+        rpn_post_nms_top_n_train=2000,
+        rpn_post_nms_top_n_test=1000,
+        rpn_nms_thresh=0.7,
+        box_nms_thresh=0.3,
+        box_detections_per_img=100,
+        box_score_thresh=0.05
+    )
+    
+    return model
 
 def draw_predictions(image, boxes, labels, scores, score_thresh=0.5):
     """Draw predictions on image with improved visibility"""

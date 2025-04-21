@@ -323,7 +323,16 @@ def prepare_grid_images(detections, max_images=None):
 def create_summary_charts(detections):
     """Create summary charts for detections"""
     if not detections:
-        return None, None, {}
+        # Return empty figures and counts when no data is available
+        empty_fig1, empty_ax1 = plt.subplots(figsize=(6, 4))
+        empty_ax1.set_title("No detection data available")
+        empty_ax1.text(0.5, 0.5, "No data to display", horizontalalignment='center', verticalalignment='center', transform=empty_ax1.transAxes)
+        
+        empty_fig2, empty_ax2 = plt.subplots(figsize=(6, 4))
+        empty_ax2.set_title("No detection data available")
+        empty_ax2.text(0.5, 0.5, "No data to display", horizontalalignment='center', verticalalignment='center', transform=empty_ax2.transAxes)
+        
+        return empty_fig1, empty_fig2, {}
     
     # Process detections to ensure unique counting per image
     unique_image_detections = process_detections_for_display(detections)
@@ -353,13 +362,22 @@ def create_summary_charts(detections):
             confidences_by_class[cls].append(avg_conf)
     
     if not class_counts:
-        return None, None, {}
+        # Return empty figures and counts when no classes were found
+        empty_fig1, empty_ax1 = plt.subplots(figsize=(6, 4))
+        empty_ax1.set_title("No detection data available")
+        empty_ax1.text(0.5, 0.5, "No data to display", horizontalalignment='center', verticalalignment='center', transform=empty_ax1.transAxes)
+        
+        empty_fig2, empty_ax2 = plt.subplots(figsize=(6, 4))
+        empty_ax2.set_title("No detection data available")
+        empty_ax2.text(0.5, 0.5, "No data to display", horizontalalignment='center', verticalalignment='center', transform=empty_ax2.transAxes)
+        
+        return empty_fig1, empty_fig2, {}
     
     # Set the style to a default matplotlib style
     plt.style.use('default')
     
-    # Create pie chart
-    fig1, ax1 = plt.subplots(figsize=(10, 6))
+    # Create pie chart with controlled size
+    fig1, ax1 = plt.subplots(figsize=(6, 4.5))
     colors = ['red', 'green', 'blue', 'yellow']
     wedges, texts, autotexts = ax1.pie(
         list(class_counts.values()),
@@ -368,10 +386,10 @@ def create_summary_charts(detections):
         startangle=90,
         colors=colors
     )
-    ax1.set_title('Detection Class Distribution (By Unique Images)', pad=20)
+    ax1.set_title('Detection Class Distribution', pad=20)
     
-    # Create confidence histogram
-    fig2, ax2 = plt.subplots(figsize=(10, 6))
+    # Create confidence histogram with controlled size
+    fig2, ax2 = plt.subplots(figsize=(7, 4.5))
     
     # Plot confidence distribution for each class
     for i, (cls, confs) in enumerate(confidences_by_class.items()):
@@ -385,9 +403,9 @@ def create_summary_charts(detections):
     ax2.grid(True, alpha=0.3)
     ax2.legend()
     
-    # Close the figures to free memory
-    plt.close(fig1)
-    plt.close(fig2)
+    # Make sure the figures are properly created and finalized
+    fig1.tight_layout()
+    fig2.tight_layout()
     
     return fig1, fig2, class_counts
 
