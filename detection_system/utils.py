@@ -251,11 +251,37 @@ def create_detection_map(detections, center_lat, center_lon):
         try:
             with open(image_data['image_path'], 'rb') as img_file:
                 encoded = base64.b64encode(img_file.read()).decode()
-                # Add image with click-to-maximize functionality
+                # Add image with click-to-maximize functionality using a lightbox approach
                 popup_html += f'''
                 <img src="data:image/jpeg;base64,{encoded}" 
                      width="100%" 
-                     onclick="window.open(this.src)" 
+                     onclick="
+                        var modal = document.createElement('div');
+                        modal.style.position = 'fixed';
+                        modal.style.left = '0';
+                        modal.style.top = '0';
+                        modal.style.width = '100%';
+                        modal.style.height = '100%';
+                        modal.style.backgroundColor = 'rgba(0,0,0,0.9)';
+                        modal.style.zIndex = '10000';
+                        modal.style.display = 'flex';
+                        modal.style.justifyContent = 'center';
+                        modal.style.alignItems = 'center';
+                        
+                        var img = document.createElement('img');
+                        img.src = this.src;
+                        img.style.maxWidth = '90%';
+                        img.style.maxHeight = '90%';
+                        img.style.objectFit = 'contain';
+                        
+                        modal.onclick = function() {{
+                            document.body.removeChild(modal);
+                        }};
+                        
+                        modal.appendChild(img);
+                        document.body.appendChild(modal);
+                        event.stopPropagation();
+                     " 
                      style="cursor: pointer" 
                      title="Click to maximize">
                 <div style="text-align: center; font-style: italic; margin-top: 5px;">
