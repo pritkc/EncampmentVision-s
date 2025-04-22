@@ -83,7 +83,7 @@ with tabs[0]:
             """,
             "icon": "🎯",
             "image_title": "Area Selection Interface",
-            "image_path": "assets/process_images/step1_input_selection.png"
+            "image_path": "Assets/process_images/step1_input_selection.png"
         },
         {
             "title": "2. Image Acquisition",
@@ -105,7 +105,7 @@ with tabs[0]:
             """,
             "icon": "📸",
             "image_title": "Street View Image Collection",
-            "image_path": "assets/process_images/step2_image_acquisition.png"
+            "image_path": "Assets/process_images/step2_image_acquisition.png"
         },
         {
             "title": "3. Model Processing",
@@ -124,7 +124,7 @@ with tabs[0]:
             """,
             "icon": "🤖",
             "image_title": "Model Architecture & Processing",
-            "image_path": "assets/process_images/step3_model_processing.png"
+            "image_path": "Assets/process_images/step3_model_processing.png"
         },
         {
             "title": "4. Object Detection",
@@ -143,7 +143,7 @@ with tabs[0]:
             """,
             "icon": "🔍",
             "image_title": "Object Detection Results",
-            "image_path": "assets/process_images/step4_object_detection.png"
+            "image_path": "Assets/process_images/step4_object_detection.png"
         },
         {
             "title": "5. Results Visualization",
@@ -162,7 +162,7 @@ with tabs[0]:
             """,
             "icon": "🎨",
             "image_title": "Detection Visualization",
-            "image_path": "assets/process_images/step5_results_visualization.png"
+            "image_path": "Assets/process_images/step5_results_visualization.png"
         },
         {
             "title": "6. Analysis & Reporting",
@@ -186,7 +186,7 @@ with tabs[0]:
             """,
             "icon": "📊",
             "image_title": "Analysis & Reporting",
-            "image_path": "assets/process_images/step6_analysis_reporting.png"
+            "image_path": "Assets/process_images/step6_analysis_reporting.png"
         }
     ]
 
@@ -219,8 +219,13 @@ with tabs[0]:
                 # Load and display the actual image from the path
                 st.markdown('<div class="image-container">', unsafe_allow_html=True)
                 image_path = step.get('image_path')
+                # First check if absolute path exists
                 if image_path and os.path.exists(image_path):
                     st.image(image_path, use_container_width=True)
+                # If not, try relative to the app root directory
+                elif image_path and os.path.exists(os.path.join(os.path.dirname(os.path.dirname(__file__)), image_path)):
+                    full_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), image_path)
+                    st.image(full_path, use_container_width=True)
                 else:
                     st.warning(f"Image not found at {image_path}. Please place the image file.")
                 st.markdown(f"<p class='image-caption'>{step['image_title']}</p>", unsafe_allow_html=True)

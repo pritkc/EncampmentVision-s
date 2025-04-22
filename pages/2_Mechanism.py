@@ -16,9 +16,11 @@ st.set_page_config(
 # Function to load model comparison data
 def load_model_comparison_data():
     try:
-        comprehensive_path = os.path.join('data', 'comprehensive.csv')
-        mask_rcnn_path = os.path.join('data', 'mask_r_cnn.csv')
-        fast_rcnn_path = os.path.join('data', 'fast_r_cnn.csv')
+        # Use absolute path based on the current file's location
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        comprehensive_path = os.path.join(data_dir, 'comprehensive.csv')
+        mask_rcnn_path = os.path.join(data_dir, 'mask_r_cnn.csv')
+        fast_rcnn_path = os.path.join(data_dir, 'fast_r_cnn.csv')
         
         # Load the data
         comprehensive_df = pd.read_csv(comprehensive_path)
