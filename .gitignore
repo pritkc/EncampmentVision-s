@@ -1,6 +1,6 @@
 results/
 data/
-models/*
+# models/*.pth
 venv/
 __pycache__/
 *.pyc
