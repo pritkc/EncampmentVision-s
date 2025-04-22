@@ -95,6 +95,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Hide the main page from navigation
+st.markdown("""
+    <style>
+        [data-testid="stSidebarNav"] li:first-child {
+            display: none;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# Add custom page name for the sidebar
+st.sidebar.header("VisionAid")
+
 # Add custom CSS to fix map control display issues
 st.markdown("""
 <style>

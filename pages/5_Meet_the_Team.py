@@ -39,31 +39,41 @@ technology to address social challenges. Meet our core team members below.
 # Create team members with clean, professional information
 team_members = [
     {
-        'name': 'Dr. Sarah Johnson',
-        'title': 'Project Lead & Computer Vision Specialist',
-        'bio': 'Dr. Johnson leads the VisionAid project, bringing over 10 years of experience in computer vision and machine learning. She specializes in object detection algorithms and their applications for social good.',
-        'contributions': ['Project management', 'Model architecture design', 'Technical direction']
+        'name': 'Xinyu Du',
+        'title': 'Project Coordinator + Data',
+        'bio': 'Xinyu coordinates project activities and ensures seamless collaboration across teams. With strong organizational skills and technical knowledge, she effectively bridges communication between stakeholders and development teams.',
+        'contributions': ['Project management', 'Technical direction', 'Mapping systems']
     },
+
     {
-        'name': 'Mark Rodriguez',
-        'title': 'Full Stack Developer',
-        'bio': 'Mark developed the web application interface and data visualization components. He has extensive experience building interactive data-driven applications with Streamlit and Python.',
-        'contributions': ['Web interface', 'Interactive visualizations', 'API integration']
+        'name': 'Ethan',
+        'title': 'Machine Learning',
+        'bio': 'Ethan spearheaded the data processing pipeline and model experimentation. His expertise in data augmentation and transformation techniques significantly improved model performance and reliability.',
+        'contributions': ['Augmentation process', 'Data transformation', 'Experimental setup', 'Results analysis']
     },
+
     {
-        'name': 'Emily Chen',
-        'title': 'Data Scientist',
-        'bio': 'Emily specializes in geospatial data analysis and machine learning. She implemented the mapping systems and coordinate processing algorithms to enable accurate spatial analysis.',
-        'contributions': ['Data analysis', 'Mapping systems', 'Results visualization']
-    }
+        'name': 'Prit',
+        'title': 'Software',
+        'bio': 'Prit architected and developed the VisionAid Streamlit application from the ground up, creating an intuitive interface for visualizing homeless encampment data on maps',
+        'contributions': ['App Development', 'Deployment', 'Data curation', 'Map integration']
+    },
 ]
 
-# Display team members in a row
-cols = st.columns(3)
+# Display team members in two rows of three
+# First row
+st.markdown("### Leadership & Development")
+cols1 = st.columns(3)
+
+# Second row
+cols2 = st.columns(3)
+
+# Combine columns for iteration
+all_cols = cols1 + cols2
 
 # Display each team member
 for i, member in enumerate(team_members):
-    with cols[i]:
+    with all_cols[i]:
         # Generate initials for the placeholder image
         name_parts = member['name'].split()
         initials = name_parts[0][0] + name_parts[-1][0]
