@@ -206,12 +206,12 @@ def create_detection_map(detections, center_lat, center_lon):
     # Add marker cluster
     marker_cluster = MarkerCluster().add_to(m)
     
-    # Color mapping matching notebook
+    # Updated color mapping with modern palette matching the summary charts
     color_map = {
-        "People": "red",
-        "Encampments": "green",
-        "Cart": "blue",
-        "Bike": "yellow"
+        "People": "#4E79A7",  # Blue
+        "Encampments": "#59A14F",  # Green
+        "Cart": "#F28E2B",  # Orange
+        "Bike": "#B475A3"  # Purple
     }
     
     # Process detections to ensure one marker per image
@@ -404,7 +404,8 @@ def create_summary_charts(detections):
     
     # Create pie chart with controlled size
     fig1, ax1 = plt.subplots(figsize=(6, 4.5))
-    colors = ['red', 'green', 'blue', 'yellow']
+    # Updated colors with a modern, more attractive palette
+    colors = ['#4E79A7', '#F28E2B', '#59A14F', '#B475A3']
     wedges, texts, autotexts = ax1.pie(
         list(class_counts.values()),
         labels=list(class_counts.keys()),

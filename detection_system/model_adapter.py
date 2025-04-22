@@ -44,12 +44,12 @@ class ModelAdapter:
             4: "Bike"
         }
         
-        # Color mapping for visualization
+        # Updated color mapping for visualization with modern color palette
         self.color_map = {
-            1: (255, 0, 0),    # Red for people
-            2: (0, 255, 0),    # Green for encampments
-            3: (0, 0, 255),    # Blue for carts
-            4: (255, 255, 0)   # Yellow for bikes
+            1: (78, 121, 167),    # Blue for people
+            2: (89, 161, 79),    # Green for encampments
+            3: (242, 142, 43),    # Orange for carts
+            4: (180, 117, 163)    # Purple for bikes
         }
     
     def load_model(self, model_path, device=None):

@@ -277,8 +277,8 @@ with tabs[1]:
                         cat_points = [(d['lat'], d['lon']) for d in filtered_detections if d['class'] == cat]
                         category_points[cat] = cat_points
                     
-                    # Plot each category with different colors
-                    colors = ['red', 'green', 'blue', 'orange', 'purple']
+                    # Plot each category with modern colors matching our updated palette
+                    colors = ['#4E79A7', '#59A14F', '#F28E2B', '#B475A3', '#9D7660']
                     for i, (cat, points) in enumerate(category_points.items()):
                         if points:
                             lats, lons = zip(*points)
@@ -315,25 +315,25 @@ with tabs[1]:
         folium.Marker(
             location=[34.0522, -118.2437],
             popup="Person (0.92)",
-            icon=folium.Icon(color="red", icon="info-sign"),
+            icon=folium.Icon(color="blue", icon="info-sign"),
         ).add_to(m)
         
         folium.Marker(
             location=[34.0532, -118.2427],
             popup="Encampment (0.87)",
-            icon=folium.Icon(color="green", icon="home"),
+            icon=folium.Icon(color="darkgreen", icon="home"),
         ).add_to(m)
         
         folium.Marker(
             location=[34.0512, -118.2447],
             popup="Cart (0.78)",
-            icon=folium.Icon(color="blue", icon="shopping-cart"),
+            icon=folium.Icon(color="orange", icon="shopping-cart"),
         ).add_to(m)
         
         folium.Marker(
             location=[34.0542, -118.2457],
             popup="Bike (0.85)",
-            icon=folium.Icon(color="orange", icon="bicycle"),
+            icon=folium.Icon(color="purple", icon="bicycle"),
         ).add_to(m)
         
         st_folium(m, width=800, height=600)
@@ -415,9 +415,9 @@ with tabs[2]:
             r1 = np.arange(4)
             r2 = [x + bar_width for x in r1]
             
-            # Create bars
-            ax.bar(r1, la_data, width=bar_width, label='Los Angeles', color='#3498db')
-            ax.bar(r2, sf_data, width=bar_width, label='San Francisco', color='#e74c3c')
+            # Create bars with updated colors
+            ax.bar(r1, la_data, width=bar_width, label='Los Angeles', color='#4E79A7')
+            ax.bar(r2, sf_data, width=bar_width, label='San Francisco', color='#F28E2B')
             
             # Add labels and legend
             ax.set_xlabel('Category')
@@ -512,8 +512,8 @@ with tabs[2]:
         r2 = [x + bar_width for x in r1]
         
         # Create bars
-        ax.bar(r1, la_data, width=bar_width, label='Los Angeles', color='#3498db')
-        ax.bar(r2, sf_data, width=bar_width, label='San Francisco', color='#e74c3c')
+        ax.bar(r1, la_data, width=bar_width, label='Los Angeles', color='#4E79A7')
+        ax.bar(r2, sf_data, width=bar_width, label='San Francisco', color='#F28E2B')
         
         # Add labels and legend
         ax.set_xlabel('Category')
