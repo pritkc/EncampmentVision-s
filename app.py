@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 import google_streetview.api
 import folium
-from folium.plugins import Draw
+from folium.plugins import Draw, Geocoder, Fullscreen, MousePosition
 from streamlit_folium import st_folium
 import base64
 import io
@@ -32,8 +32,8 @@ from pathlib import Path
 from io import BytesIO
 from functools import partial
 import torchvision.transforms as transforms
-from homeless_detection.model_adapter import get_model_adapter, draw_predictions
-from homeless_detection.utils import process_detections_for_display, prepare_grid_images
+from detection_system.model_adapter import get_model_adapter, draw_predictions
+from detection_system.utils import process_detections_for_display, prepare_grid_images
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -75,25 +75,77 @@ except Exception:
     # Silently handle any errors during path fix
     pass
 
-# Import utility functions from the homeless_detection package
+# Import utility functions from the detection_system package
 try:
-    from homeless_detection.model_adapter import get_model_adapter
-    from homeless_detection.utils import draw_predictions as utils_draw_predictions
-    from homeless_detection.utils import create_detection_map, create_summary_charts
+    from detection_system.model_adapter import get_model_adapter
+    from detection_system.utils import draw_predictions as utils_draw_predictions
+    from detection_system.utils import create_detection_map, create_summary_charts
     if DEBUG:
-        st.write("Successfully imported homeless_detection utilities")
+        st.write("Successfully imported detection_system utilities")
 except Exception as e:
-    st.error(f"Error importing homeless_detection utilities: {str(e)}")
+    st.error(f"Error importing detection_system utilities: {str(e)}")
     if DEBUG:
         st.write(f"Detailed error: {str(e)}")
 
 # Set page config
 st.set_page_config(
-    page_title="Homeless Detection System",
+    page_title="VisionAid",
     page_icon="🏘️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Hide the main page from navigation
+st.markdown("""
+    <style>
+        [data-testid="stSidebarNav"] li:first-child {
+            display: none;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# Add custom page name for the sidebar
+st.sidebar.header("VisionAid")
+
+# Add custom CSS to fix map control display issues
+st.markdown("""
+<style>
+/* Ensure map controls display correctly with proper z-index */
+.leaflet-control {
+    z-index: 1000 !important;
+}
+
+.leaflet-control-zoom {
+    z-index: 1000 !important;
+}
+
+.leaflet-control-geocoder {
+    z-index: 1001 !important; /* Place search above other controls */
+}
+
+.leaflet-draw {
+    z-index: 1000 !important;
+}
+
+/* Fix for mouse wheel zoom */
+.folium-map {
+    width: 100%;
+    height: 100%;
+}
+
+/* Make maps responsive but with minimum height */
+.stfolium {
+    min-height: 500px;
+}
+
+/* Ensure controls are visible and not hidden */
+.leaflet-control-container .leaflet-top, 
+.leaflet-control-container .leaflet-bottom {
+    pointer-events: auto;
+    z-index: 1000;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # Session state debugging
 if st.session_state:
@@ -161,26 +213,26 @@ def ensure_file_exists(file_path, max_retries=3, retry_delay=0.5):
 
 # Class mapping
 LABEL_MAP = {
-    1: "Homeless_People",
-    2: "Homeless_Encampments",
-    3: "Homeless_Cart",
-    4: "Homeless_Bike"
+    1: "People",
+    2: "Encampments",
+    3: "Cart",
+    4: "Bike"
 }
 
 # Category display names (more user-friendly)
 CATEGORY_DISPLAY = {
-    1: "Homeless People",
-    2: "Homeless Encampments",
-    3: "Homeless Carts",
-    4: "Homeless Bikes"
+    1: "People",
+    2: "Encampments",
+    3: "Carts",
+    4: "Bikes"
 }
 
 # Add color mapping for categories
 CATEGORY_COLORS = {
-    1: (255, 0, 0),    # Red for Homeless People
-    2: (0, 255, 0),    # Green for Homeless Encampments
-    3: (0, 0, 255),    # Blue for Homeless Carts
-    4: (255, 165, 0)   # Orange for Homeless Bikes
+    1: (255, 0, 0),    # Red for People
+    2: (0, 255, 0),    # Green for Encampments
+    3: (0, 0, 255),    # Blue for Carts
+    4: (255, 165, 0)   # Orange for Bikes
 }
 
 # Add short names for more compact labels
@@ -248,8 +300,8 @@ def draw_predictions_with_colors(image, boxes, labels, scores, threshold=0.5):
     return image
 
 # Sidebar for input parameters
-st.sidebar.title("Homeless Detection System")
-st.sidebar.info("This application detects homeless-related objects in Google Street View images")
+st.sidebar.title("VisionAid")
+st.sidebar.info("This application detects encampment-related objects in Google Street View images")
 
 # API Key input (with secure handling)
 api_key = st.sidebar.text_input("Google Street View API Key", type="password")
@@ -382,11 +434,11 @@ else:
             
             # Show model info based on file name
             if "FAST_R_CNN" in selected_model:
-                st.sidebar.info("FAST_R_CNN Custom Model for Homeless Detection")
+                st.sidebar.info("FAST_R_CNN Custom Model for Encampment Detection")
             elif "4classes" in selected_model:
-                st.sidebar.info("Model trained for detecting 4 classes: Homeless People, Encampments, Carts, and Bikes")
+                st.sidebar.info("Model trained for detecting 4 classes: People, Encampments, Carts, and Bikes")
             elif "2classes" in selected_model:
-                st.sidebar.info("Model trained for detecting 2 classes: Homeless People and Encampments")
+                st.sidebar.info("Model trained for detecting 2 classes: People and Encampments")
         except Exception as e:
             logger.error(f"Error initializing model adapter: {str(e)}")
             logger.error(f"Exception type: {type(e)}")
@@ -401,9 +453,10 @@ else:
             can_run_detection = True
 
 # Main content area
-st.title("Homeless Detection from Google Street View")
+st.title("VisionAid - Encampment Detection")
 st.markdown("""
-This application uses a trained Faster R-CNN model to detect homeless-related objects in Google Street View images.
+This application allows you to run the detection model on Google Street View images to detect encampment-related objects.
+Provide your API key, select an area, and adjust settings before running the detection process.
 """)
 
 # Display selected categories
@@ -428,18 +481,40 @@ def display_area_map():
     center_lat = (top_left_lat + bottom_right_lat) / 2
     center_lon = (top_left_lon + bottom_right_lon) / 2
     
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=16)
+    # Create base map with proper zoom controls but simplified options
+    m = folium.Map(
+        location=[center_lat, center_lon], 
+        zoom_start=15,
+        zoom_control=True,
+        scrollWheelZoom=True,
+        dragging=True,
+        preferCanvas=True  # Use canvas renderer for better performance
+    )
     
-    # Draw rectangle for the area
-    folium.Rectangle(
-        bounds=[(top_left_lat, top_left_lon), (bottom_right_lat, bottom_right_lon)],
-        color='blue',
-        fill=True,
-        fill_opacity=0.2,
-        tooltip="Selected Area"
+    # Add fullscreen control separately with clear positioning
+    folium.plugins.Fullscreen(
+        position='topright',
+        title='Fullscreen',
+        title_cancel='Exit',
+        force_separate_button=True
     ).add_to(m)
     
-    # Draw grid lines
+    # Create a feature group for the grid and bounding box
+    fg = folium.FeatureGroup(name="Selection Area")
+    
+    # Draw rectangle for the area with higher z-index
+    rect = folium.Rectangle(
+        bounds=[(top_left_lat, top_left_lon), (bottom_right_lat, bottom_right_lon)],
+        color='blue',
+        weight=3,
+        fill=True,
+        fill_opacity=0.2,
+        tooltip="Selected Area",
+        popup="Current Selection"
+    )
+    rect.add_to(fg)
+    
+    # Draw grid lines with lower opacity to reduce visual clutter
     lat_step = (bottom_right_lat - top_left_lat) / (num_rows - 1) if num_rows > 1 else 0
     lon_step = (bottom_right_lon - top_left_lon) / (num_cols - 1) if num_cols > 1 else 0
     
@@ -449,8 +524,8 @@ def display_area_map():
             locations=[(lat, top_left_lon), (lat, bottom_right_lon)],
             color='gray',
             weight=1,
-            opacity=0.7
-        ).add_to(m)
+            opacity=0.4
+        ).add_to(fg)
     
     for j in range(num_cols):
         lon = top_left_lon + j * lon_step
@@ -458,81 +533,226 @@ def display_area_map():
             locations=[(top_left_lat, lon), (bottom_right_lat, lon)],
             color='gray',
             weight=1,
-            opacity=0.7
-        ).add_to(m)
+            opacity=0.4
+        ).add_to(fg)
     
-    # Add drawing capabilities to the map
-    draw = Draw(
-        draw_options={
-            'polyline': False,
-            'polygon': False,
-            'circle': False,
-            'marker': False,
-            'circlemarker': False,
-            'rectangle': True,
-        },
+    # Add the feature group to the map
+    fg.add_to(m)
+    
+    # Simplified drawing options - only rectangle with clear settings
+    draw_options = {
+        'polyline': False,
+        'polygon': False,
+        'circle': False,
+        'marker': False,
+        'circlemarker': False,
+        'rectangle': {
+            'shapeOptions': {
+                'color': '#ff7800',
+                'weight': 3,
+                'opacity': 0.7,
+                'fillOpacity': 0.2
+            }
+        }
+    }
+    
+    # Add drawing capabilities to the map with fixed position
+    draw = folium.plugins.Draw(
+        position='topleft',
+        draw_options=draw_options,
         edit_options={
-            'edit': True,
-            'remove': True
+            'featureGroup': None,  # Changed from fg to None
+            'edit': False,  # Disable edit to prevent click conflicts
+            'remove': False  # Disable remove to prevent click conflicts
         }
     )
     draw.add_to(m)
     
+    # Add Geocoder search control with proper API integration
+    if api_key:
+        folium.plugins.Geocoder(
+            api_key=api_key,
+            position='topright'
+        ).add_to(m)
+    
+    # Add mouse position display for better coordinate visibility
+    folium.plugins.MousePosition(
+        position='bottomleft',
+        separator=' | ',
+        num_digits=6,
+        prefix="Coordinates: "
+    ).add_to(m)
+    
+    # Add custom JavaScript to fix interactions and enhance stability
+    fix_js = """
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Wait for map to be fully loaded
+        setTimeout(function() {
+            var map = document.querySelector('.folium-map');
+            if (!map) return;
+            
+            // Ensure map has focus handling
+            map.addEventListener('mouseenter', function() {
+                this.focus();
+            });
+            
+            // Fix for draw tool click handling
+            var drawControl = document.querySelector('.leaflet-draw');
+            if (drawControl) {
+                // Prevent draw tool from being obscured
+                drawControl.style.zIndex = "1001";
+                
+                // Improve click handling for draw buttons
+                var drawButtons = drawControl.querySelectorAll('.leaflet-draw-draw-rectangle');
+                drawButtons.forEach(function(btn) {
+                    btn.style.pointerEvents = 'all';
+                    btn.style.cursor = 'pointer';
+                    
+                    // Prevent double-click issues
+                    btn.addEventListener('click', function(e) {
+                        // Prevent event bubbling
+                        e.stopPropagation();
+                    });
+                });
+            }
+            
+            // Fix for drawing mode conflicts
+            var leafletMap = window.L && window.L.DomUtil && 
+                document.querySelector('.leaflet-map-pane') ? 
+                window.L.DomEvent.getMousePosition : null;
+                
+            if (leafletMap && window.L.Draw && window.L.Draw.Rectangle) {
+                // Improve rectangle drawing behavior
+                var originalRectangle = window.L.Draw.Rectangle.prototype._onMouseMove;
+                window.L.Draw.Rectangle.prototype._onMouseMove = function(e) {
+                    // Prevent multiple rectangle captures
+                    if (!this._startLatLng) return;
+                    
+                    // Call original handler
+                    originalRectangle.call(this, e);
+                };
+                
+                // Fix mouseup handling for rectangle drawing
+                var originalMouseUp = window.L.Draw.Rectangle.prototype._onMouseUp;
+                window.L.Draw.Rectangle.prototype._onMouseUp = function(e) {
+                    // Ensure proper completion of drawing
+                    if (this._shape && this._startLatLng) {
+                        originalMouseUp.call(this, e);
+                        
+                        // Reset state to prevent ghost drawings
+                        this._startLatLng = null;
+                        this._shape = null;
+                    }
+                };
+            }
+        }, 800);
+    });
+    </script>
+    """
+    m.get_root().html.add_child(folium.Element(fix_js))
+    
     return m
 
-# Display initial map
-col1, col2 = st.columns([2, 1])
-with col1:
-    st.subheader("Selected Area")
-    st.markdown("""
-    **Draw a bounding box on the map:**
-    1. Click the rectangle tool (☐) in the toolbar
-    2. Click and drag on the map to draw a box
-    3. Edit the box by clicking the edit tool and dragging the corners
-    4. The coordinates will automatically update in the sidebar
-    """)
-    area_map = display_area_map()
-    
-    # Replace folium_static with st_folium
-    map_data = st_folium(area_map, width=800, returned_objects=["all_drawings"])
-    
-    # Handle map data for bounding box updates
-    if map_data is not None and "all_drawings" in map_data:
-        drawings = map_data["all_drawings"]
-        if drawings:  # If there are any drawings
-            last_drawing = drawings[-1]  # Get the most recent drawing
-            if "geometry" in last_drawing and "coordinates" in last_drawing["geometry"]:
-                coords = last_drawing["geometry"]["coordinates"][0]  # Get coordinates
-                # Extract bounds from the rectangle coordinates
-                lats = [coord[1] for coord in coords]
-                lons = [coord[0] for coord in coords]
+# Handle map interaction for area selection
+def handle_map_interaction(col1, col2):
+    with col1:
+        # Clear instructions about map functionality
+        st.markdown("""
+        ### Map Selection Tool
+        
+        Use this map to select the area where you want to run detection:
+        
+        1. **Search** for a location using the search icon (🔍) in the top-right
+        2. **Zoom** with the scroll wheel or +/- controls (top-left)
+        3. **Draw box**: Click the rectangle tool (☐) and draw on the map
+        4. **View coordinates** at the bottom left as you move the mouse
+        5. **Switch to fullscreen** for easier selection (top-right icon)
+        """)
+        
+        # Create the map
+        area_map = display_area_map()
+        
+        # Configure st_folium with stable settings
+        map_data = st_folium(
+            area_map, 
+            height=500,
+            width=700,
+            returned_objects=["all_drawings", "last_active_drawing"],
+            use_container_width=True
+        )
+        
+        # Clear handling of map response data
+        if map_data is not None and "all_drawings" in map_data and map_data["all_drawings"]:
+            try:
+                # Get the most recent drawing
+                last_drawing = map_data["all_drawings"][-1]
                 
-                bbox_data = {
-                    "topLeftLat": max(lats),
-                    "topLeftLon": min(lons),
-                    "bottomRightLat": min(lats),
-                    "bottomRightLon": max(lons)
-                }
-                handle_bbox_selection(json.dumps(bbox_data))
+                # Only process if we have valid geometry
+                if "geometry" in last_drawing and "coordinates" in last_drawing["geometry"]:
+                    # Extract coordinates safely
+                    coords = last_drawing["geometry"]["coordinates"]
+                    
+                    # Only process rectangular coordinates (4 points in first array)
+                    if coords and len(coords) > 0 and len(coords[0]) >= 4:
+                        # Get points
+                        points = coords[0]
+                        
+                        # Extract lat/lon values correctly
+                        lats = [point[1] for point in points if len(point) >= 2]
+                        lons = [point[0] for point in points if len(point) >= 2]
+                        
+                        if lats and lons:
+                            # Calculate bounding box - avoid extreme values
+                            max_lat, min_lat = max(lats), min(lats)
+                            min_lon, max_lon = min(lons), max(lons)
+                            
+                            # Update bounding box with valid values
+                            bbox_data = {
+                                "topLeftLat": max_lat,
+                                "topLeftLon": min_lon,
+                                "bottomRightLat": min_lat,
+                                "bottomRightLon": max_lon
+                            }
+                            
+                            # Update state with valid values only
+                            if all(isinstance(v, (int, float)) for v in bbox_data.values()):
+                                handle_bbox_selection(json.dumps(bbox_data))
+                                
+                                # Log successful update for debugging
+                                logger.info(f"Updated bounding box: {bbox_data}")
+            except Exception as e:
+                # Safely handle any errors during processing
+                logger.error(f"Error processing map drawing: {e}")
+                
+    # Display grid information in the second column
+    with col2:
+        st.subheader("Grid Information")
+        st.info(f"""
+        **Selected Area:**
+        - Grid Size: {num_rows} x {num_cols} = {num_rows * num_cols} points
+        - Latitude Range: {top_left_lat:.6f} to {bottom_right_lat:.6f}
+        - Longitude Range: {top_left_lon:.6f} to {bottom_right_lon:.6f}
+        
+        **Sampling:**
+        - Points will be sampled at headings: 0° and 180°
+        - Total API calls: {num_rows * num_cols * 2}
+        """)
+        
+        # Add a tips section with clearer instructions
+        st.markdown("### Tips")
+        st.markdown("""
+        - For best results, draw a rectangle by clicking and dragging in one continuous motion
+        - You can adjust the coordinates manually using the number inputs in the sidebar
+        - Keep the grid size reasonable (5x5 recommended) to avoid excessive API usage
+        - Make sure your Google API key is correctly entered in the sidebar
+        """)
 
-with col2:
-    st.subheader("Grid Information")
-    st.info(f"""
-    - Grid Size: {num_rows} x {num_cols} = {num_rows * num_cols} points
-    - Latitude Range: {top_left_lat:.6f} to {bottom_right_lat:.6f}
-    - Longitude Range: {top_left_lon:.6f} to {bottom_right_lon:.6f}
-    - Points will be sampled at headings: 0° and 180°
-    - Total API calls: {num_rows * num_cols * 2}
-    """)
-    
-    # Add a tips section
-    st.markdown("### Tips")
-    st.markdown("""
-    - Draw a rectangle on the map to set the area
-    - The coordinates will update automatically in the sidebar
-    - You can fine-tune coordinates by editing the numbers in the sidebar
-    - Keep the shape rectangular for accurate grid calculations
-    """)
+# Main layout
+col1, col2 = st.columns([2, 1])
+
+# Handle map interaction through a dedicated function
+handle_map_interaction(col1, col2)
 
 # Function to load model with error handling
 def load_model():
@@ -582,7 +802,7 @@ def load_model():
             logger.info("Calling model_adapter.load_model()")
             try:
                 # First try direct loading without using the adapter
-                from homeless_detection.model_adapter import create_custom_fasterrcnn_with_bn
+                from detection_system.model_adapter import create_custom_fasterrcnn_with_bn
                 logger.info("Creating model directly using create_custom_fasterrcnn_with_bn")
                 
                 # Create model instance
@@ -653,10 +873,10 @@ def load_model():
                     
                     def get_class_map(self):
                         return {
-                            1: "Homeless_People",
-                            2: "Homeless_Encampments",
-                            3: "Homeless_Cart",
-                            4: "Homeless_Bike"
+                            1: "People",
+                            2: "Encampments",
+                            3: "Cart",
+                            4: "Bike"
                         }
                 
                 # Create adapter wrapper
@@ -779,10 +999,10 @@ def process_image(image_path, model_adapter, device, lat, lon, heading, pano_id,
             else:
                 logger.warning("Model adapter has no get_class_map method, using default")
                 class_map = {
-                    1: "Homeless_People",
-                    2: "Homeless_Encampments",
-                    3: "Homeless_Cart",
-                    4: "Homeless_Bike"
+                    1: "People",
+                    2: "Encampments",
+                    3: "Cart",
+                    4: "Bike"
                 }
         except Exception as class_error:
             logger.error(f"Error getting class map: {str(class_error)}")
@@ -1018,7 +1238,8 @@ def run_detection():
                     'location': f'{lat},{lon}',
                     'heading': str(heading),
                     'pitch': '0',
-                    'key': api_key
+                    'key': api_key,
+                    'source': 'outdoor'  # Add this parameter to only get official Street View car images
                 }]
                 
                 try:
@@ -1081,7 +1302,7 @@ def run_detection():
                                     results_placeholder.image(
                                         detections[0]['image_path'], 
                                         caption=f"Latest detection: {detections[0]['class']} ({detections[0]['confidence']:.2f})",
-                                        use_container_width=True
+                                        width=-1
                                     )
                             else:
                                 logger.info("No detections found at this location")
@@ -1412,7 +1633,8 @@ if st.session_state.get('results_displayed', False) and 'cached_map' in st.sessi
                             # Display the main image with caption
                             st.image(main_img, 
                                     caption=f"All Detections: {', '.join(det_summary)}\n{location_info}",
-                                    use_container_width=True)
+                                    width=-1
+                                )
                             
                             # Add expandable section for individual detections
                             with st.expander("View Individual Detections"):
@@ -1431,7 +1653,8 @@ if st.session_state.get('results_displayed', False) and 'cached_map' in st.sessi
                                     
                                     st.image(single_det_img, 
                                             caption=f"{det['class']} - Confidence: {det['confidence']:.2f}\n{location_info}",
-                                            use_container_width=True)
+                                            width=-1
+                                        )
                                     
                                     # Add a separator between detections
                                     if i < len(data['detections']) - 1:
@@ -1460,7 +1683,7 @@ if st.session_state.get('results_displayed', False) and 'cached_map' in st.sessi
             st.download_button(
                 label="Download CSV",
                 data=csv_data,
-                file_name="homeless_detections.csv",
+                file_name="encampment_detections.csv",
                 mime="text/csv"
             )
 elif not can_run_detection:
@@ -1468,7 +1691,7 @@ elif not can_run_detection:
 
 # Footer
 st.markdown("---")
-st.markdown("Homeless Detection System - Powered by Streamlit and PyTorch")
+st.markdown("VisionAid - Powered by PyTorch")
 
 # After results display
 logger.info("=== Final State Check ===")
@@ -1515,4 +1738,37 @@ logger.info("=== End Final Resource Verification ===")
 # At the end of the file
 log_async_state()
 logger.info("=== Final Component State ===")
-logger.info("Final component states: %s", [k for k in st.session_state.keys() if len(k) == 64]) 
+logger.info("Final component states: %s", [k for k in st.session_state.keys() if len(k) == 64])
+
+# Function to geocode address using Google Maps API
+def geocode_address(address, api_key):
+    """Convert an address to latitude and longitude using Google Maps Geocoding API"""
+    if not address or not api_key:
+        return None
+    
+    try:
+        # Prepare the request URL
+        base_url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "address": address,
+            "key": api_key
+        }
+        
+        # Make the request
+        response = requests.get(base_url, params=params)
+        data = response.json()
+        
+        # Check if the request was successful
+        if data["status"] == "OK":
+            location = data["results"][0]["geometry"]["location"]
+            return {
+                "lat": location["lat"],
+                "lng": location["lng"],
+                "formatted_address": data["results"][0]["formatted_address"]
+            }
+        else:
+            logger.warning(f"Geocoding error: {data['status']}")
+            return None
+    except Exception as e:
+        logger.error(f"Error geocoding address: {str(e)}")
+        return None 

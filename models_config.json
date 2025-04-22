@@ -6,10 +6,10 @@
       "type": "custom_fasterrcnn_with_bn",
       "num_classes": 5,
       "class_map": {
-        "1": "Homeless_People",
-        "2": "Homeless_Encampments",
-        "3": "Homeless_Cart",
-        "4": "Homeless_Bike"
+        "1": "People",
+        "2": "Encampments",
+        "3": "Cart",
+        "4": "Bike"
       },
       "input_size": [512, 512],
       "preprocessing": "normalize",
@@ -28,8 +28,8 @@
       "type": "custom_fasterrcnn_with_bn",
       "num_classes": 3,
       "class_map": {
-        "1": "Homeless_People",
-        "2": "Homeless_Encampments"
+        "1": "People",
+        "2": "Encampments"
       },
       "input_size": [512, 512],
       "preprocessing": "normalize",
